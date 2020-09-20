@@ -1,0 +1,30 @@
+#!/bin/bash
+#set -x
+while [[ "$@" != "" ]]
+do
+#echo $1 | xargs bash -c 'basename "$@"'
+	base_name="$(basename -s ".msg" "$1")"
+
+#	echo $file
+#	base_name=$(basename $file)
+	base_name=${base_name// /-}
+	eml_file="$(dirname "$1")"/$base_name.eml
+#	set -x
+	if [[ -f $eml_file ]]
+	then
+		echo "$0: $eml_file exists, overwrite ?[y]"
+		read -n 1 
+		rm -v $eml_file
+	fi
+	echo "Converting $1 '--->' $eml_file"
+	result="$(msgconvert "$1" --mbox $eml_file)"
+	if [[ "$result" != "" ]]
+	then
+		echo -n $result
+	fi
+#	set +x
+	dos2unix $eml_file
+	echo ""
+	shift
+done
+	

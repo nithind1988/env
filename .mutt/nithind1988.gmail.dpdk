@@ -1,0 +1,41 @@
+set editor = `echo \$EDITOR`
+set imap_user='nithind1988@gmail.com'
+set from="Nithin Dabilpuram<nithind1988@gmail.com>"
+set hostname="gmail.com"
+set folder="imaps://imap.gmail.com:993/"
+set postponed="=Drafts"
+set spoolfile="imaps://imap.gmail.com/ml/dpdk"
+set smtp_url="smtps://$imap_user:$imap_pass@smtp.gmail.com:465"
+unset imap_passive
+set imap_keepalive = 300
+set mail_check = 120
+set sort=threads
+set sort_aux=last-date-received
+set collapse_unread
+set ssl_starttls = yes
+set ssl_force_tls = yes
+set header_cache = "~/.muttcache3"
+set message_cachedir = "~/.muttcache3"
+set certificate_file = ~/.mutt/certificates
+set smtp_authenticators = 'gssapi:login'
+
+set imap_qresync = yes
+set imap_condstore = yes
+set imap_fetch_chunk_size = 32
+
+#pass from gnome keyring
+
+source ~/.mutt/mutt_shortcuts
+set pager_index_lines   = 30
+
+set my_name = '<nithind1988@gmail.com>'
+
+#set my_netignore = \
+"ark:\|avf:\|avp:\|axgbe:\|bnx2x:\|bnxt:\|mvneta:\|bonding:\|cxgbe:\|dpaa:\|dpaa2:\|e1000:\|ena:\|enic:\|failsafe:\|fm10k:\|i40e:\|ifc:\|ice:\|ixgbe:\|kni:\|liquidio:\|mlx4:\|mlx5:\|mvpp2:\|nfp:\|qede:\|ring:\|sfc:\|softnic:\|szedata2:\|vdev_netvsc:\|vhost:\|virtio:\|vmxnet3:\|netvsc:\|atlantic:\|enetc:"
+
+source ~/.mutt/dpdk_ignore1
+
+#macro index TN '<collapse-all><tag-pattern> ~s $my_netignore<enter><tag-prefix-cond><clear-flag>N<tag-prefix-cond><clear-flag>O<tag-prefix-cond><clear-flag>*<end-cond><collapse-all>'
+
+set timeout = 10
+timeout-hook . "exec sync-mailbox"

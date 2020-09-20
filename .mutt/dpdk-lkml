@@ -1,0 +1,8 @@
+# Folder hooks
+folder-hook 'nithind1988@gmail.com.lkml' 'source ~/.mutt/nithind1988.gmail.lkml'
+
+# Default account
+source ~/.mutt/ndabilpuram.cavium.standalone  
+
+# Macros for switching accounts
+macro index <f2> '<sync-mailbox><enter-command>source ~/.mutt/account.com.gmail.foo<enter><change-folder>!<enter>'

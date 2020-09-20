@@ -1,0 +1,149 @@
+bind index <Right> "collapse-thread"
+bind index <Left> "collapse-thread"
+bind index \Cv "collapse-all"
+#bind index r "read-thread"
+#macro index r "<read-thread><collapse-thread><collapse-thread>"
+macro index R "<read-thread><collapse-thread><collapse-thread>"
+#macro index t "<read-thread><collapse-thread><collapse-thread><sync-mailbox>"
+#macro index r "<clear-flag>N<sync-mailbox>"
+#macro index u "<set-flag>N<sync-mailbox>"
+macro index t "<read-thread><collapse-thread><collapse-thread>"
+macro index r "<clear-flag>N"
+macro index u "<set-flag>N"
+bind index R "reply"
+bind pager <Up> previous-line
+bind pager <Down> next-line
+#bind index p "previous-unread"
+#bind index n "next-unread"
+macro index / "<search>~B "
+bind index n "search-next" 
+bind index N "search-opposite" 
+bind index G imap-fetch-mail
+macro index T '<collapse-all><tag-pattern> ~s'
+macro index ,r '<tag-prefix-cond><clear-flag>N<tag-prefix-cond><clear-flag>O<tag-prefix-cond><clear-flag>*<sync-mailbox><end-cond><collapse-all>'
+macro index ,u '<tag-prefix-cond><set-flag>N<tag-prefix-cond><clear-flag>*<sync-mailbox><end-cond><collapse-all>'
+macro pager,index S "| ~/bin/file_email /tmp/mutt<enter>"
+
+alternates ndabilpuram
+alternates nithin.dabilpuram
+
+color index green default "~N"          # unread messages
+color index green default "~N~F"        # unread flagged messages
+color index green default "~v~(~N)"     # collapsed thread with unread
+color index green default "~v~(~U)"     # collapsed thread with unread
+#color index default default  "~v~(~N)"
+color index red   default "~F"          # flagged messages
+#color index default default  "~v~(!~N)"
+color index red   default "~v~F"          # flagged messages
+#color index underline default default "~v~(~N)"     # collapsed thread with unread
+color index brightcyan default "~N~C cavium"     # color to or cc of cavium with blue only unread
+color index brightcyan default "~N~C nithin"     # color to or cc of your name with blue 
+color index brightcyan default "~N~C ndabilpuram"     # color to or cc of your name with blue 
+color index brightcyan default "~N~C marvell"     # color to or cc of your name with blue 
+
+# Header highlighting
+color hdrdefault    brightgreen     default         
+color header        brightyellow    default         "^(From)"
+color header        blue            default         "^(Subject)"
+
+# Patch file highlighting
+#color body green black "^diff \-.*"
+#color body green black "^index [a-f0-9].*"
+#color body green black "^\-\-\- .*"
+#color body green black "^[\+]{3} .*"
+#color body cyan black "^[\+][^\+]+.*"
+#color body red  black "^\-[^\-]+.*"
+#color body brightblue black "^@@ .*"
+
+color   body    brightwhite     default         ^[[:space:]].*                  
+color   body    yellow          default         ^(diff).*                       
+#color   body    white           default         ^[\-\-\-].*                     
+#color   body    white           default         ^[\+\+\+].*                     
+#color   body    green           default         ^[\+].*                         
+#color   body    red             default         ^[\-].*                         
+#color   body    brightblue      default         [@@].*                          
+color   body    brightwhite     default         ^(\s).*                         
+color   body    cyan            default         ^(Signed-off-by).*
+color   body    cyan            default         ^(Docker-DCO-1.1-Signed-off-by).*
+color   body    brightwhite     default         ^(Cc)
+color   body    yellow          default         "^diff \-.*"
+color   body    brightwhite     default         "^index [a-f0-9].*"
+color   body    brightblue      default         "^---$"
+color   body    white           default         "^\-\-\- .*"
+color   body    white           default         "^[\+]{3} .*"
+color   body    green           default         "^[\+][^\+]+.*"
+color   body    red             default         "^\-[^\-]+.*"
+color   body    brightblue      default         "^@@ .*"
+color   body    green           default         "LGTM"
+color   body    brightmagenta   default         "-- Commit Summary --"
+color   body    brightmagenta   default         "-- File Changes --"
+color   body    brightmagenta   default         "-- Patch Links --"
+color   body    green           default         "^Merged #.*"
+color   body    red             default         "^Closed #.*"
+color body brightblue default "^Reply to this email.*"
+
+
+macro pager,index $ "<sync-mailbox><tag-pattern> ~d <1m<enter><tag-prefix>| ~/bin/file_email <enter><untag-pattern> ~A<enter>"
+
+# common config hooks
+# This is hack to prefetch all messages < 1 month old
+#folder-hook . 'push "<tag-pattern> ~d <1m<enter><tag-prefix>| ~/bin/file_email <enter><untag-pattern> ~A<enter>"'
+folder-hook . 'push $'
+folder-hook . 'push <collapse-all>'
+
+set timeout = 1
+set mail_check =10
+set mail_check_recent = no
+set collapse_unread = yes
+set imap_keepalive = 50
+set sort=threads
+unset imap_passive
+#set sort_aux=last-date-received
+set sort_aux=reverse-last-date-received
+set mark_old=no
+#set index_format='%4C %Z %[%d %b %r] %-15.15L (%?M?%3M&%3e? %?l?%4l&%4c?) %s'
+#set index_format='%Z %-15.15L %?M?>& ? %-80.80s %[%d/%b/%y %I:%M %p]'
+set index_format='%Z %-15.15L %?M?>& ? %-80.80s %@date@'
+index-format-hook  date  "~d<1d"    "%-10[%H:%M]"
+index-format-hook  date  "~d<1w"    "%-10[%A]"
+index-format-hook  date  "~d<1y"    "%-10[%b %d]"
+index-format-hook  date  "~A"	    "%-10[%m/%y]"
+
+ignore *
+unignore from date subject to cc
+unignore organization organisation x-mailer: x-newsreader: x-mailing-list:
+unignore posted-to:
+unignore Message-Id
+unignore Content-Type
+
+set pager_context       = 3 
+set pager_index_lines   = 10
+set pager_stop = yes
+set uncollapse_new = no
+set wait_key = no
+
+set arrow_cursor
+set resolve=no
+bind pager <Left> previous-entry
+bind pager <Right> next-entry
+bind pager <C-Up> previous-page
+bind pager <C-Down> next-page
+macro pager <Home> "<exit><previous-page><enter>"
+macro pager <End> "<exit><next-page><enter>"
+macro pager <Esc><Left> "<exit><collapse-thread><previous-entry>"
+macro pager <Esc><Right> "<exit><collapse-thread><next-etnry>"
+bind pager <Esc><Up> previous-page
+bind pager <Esc><Down> next-page
+
+#New 
+
+macro pager <Right> "<exit><collapse-thread>"
+macro pager <Left> "<exit><collapse-thread>"
+bind index <Up> previous-entry
+bind index <Down> next-entry
+bind pager,index <C-Up> previous-entry
+bind pager,index <C-Down> next-entry
+bind pager <Home> previous-line
+bind pager <End> next-line
+bind pager <Up> previous-line
+bind pager <Down> next-line

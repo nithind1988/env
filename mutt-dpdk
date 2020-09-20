@@ -1,0 +1,2 @@
+export EDITOR=vim
+/home/build/os/mutt-1.10.0/mutt -F ~/.mutt/nithind1988.gmail.dpdk

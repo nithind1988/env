@@ -1,0 +1,2 @@
+export EDITOR=vim
+~/bin/mutt -F ~/.mutt/nithind1988.gmail.lkml

@@ -1,0 +1,43 @@
+#!/bin/bash
+srcdir=$(realpath $1)
+dstdir=$(realpath $2)
+TMPFILE=/tmp/dirdiff.patch
+rm -rf $TMPFILE
+
+for i in $(find $srcdir -type f)
+do
+
+fop=$(file -b $i)
+if [[ "$fop" =~ "ASCII text" ]]
+then
+	echo "Checking file $i" >>/dev/null
+else
+	echo "Skipping $i"
+	continue
+fi
+rpath="${i##$srcdir/}"
+diff -dNq $srcdir/$rpath $dstdir/$rpath 2>/dev/null 1>&2
+res=$?
+if [ $res -eq 1 ]
+then
+	diff -u5p $srcdir/$rpath $dstdir/$rpath >>$TMPFILE
+	cmd="vimdiff $srcdir/$rpath $dstdir/$rpath"
+	echo $cmd
+	echo -n "Continue ? "
+	read -n 1 inp
+	if [[ "$inp" == "n" ]]
+	then
+		echo "...Skip to next"
+		continue
+	fi
+	$cmd
+#else
+#echo "$srcdir/$rpath and $dstdir/$rpath doesn't differ"
+fi
+
+done
+
+if [[ -f "$TMPFILE" ]]
+then
+	echo "Complete diff as patch is at $TMPFILE"
+fi

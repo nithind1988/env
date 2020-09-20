@@ -1,0 +1,47 @@
+#!/bin/bash
+
+#echo "restashing"
+
+#echo $0 $1 $2 $3 $4
+
+if [[ "$1" == "help" ]]
+then
+	echo "usage: git restash [ stash@{n} ]"
+	exit
+fi
+
+stash_name=$1
+if [[ "$stash_name" == "" ]]
+then
+	stash_name="stash@{0}"
+fi
+
+list=`git stash list | grep "$stash_name"`
+if [[ "$list" == "" ]]
+then
+	echo "$0: ''$stash_name'' doesn't exist";
+	exit
+else
+	echo "\t$list"
+	echo -n "Continue to restash below? [y] "
+	read -n 1 inp
+	echo " "
+	if [[ "$inp" != "" ]] && [[ "$inp" != "y" ]]
+	then
+		echo "usage: git restash [ stash@{n} ]"
+		exit
+	fi
+fi
+git stash show -p $stash_name >/tmp/restash-save.patch
+
+patch -R -p1 --quiet --dry-run </tmp/restash-save.patch 1>/tmp/restash-save.patch.log 2>&1
+if [[ $? -ne 0 ]]
+then
+	cat /tmp/restash-save.patch.log
+	echo
+	echo "$0: error reverting patch, /tmp/restash-save.patch"
+	echo "args: $0"
+	exit
+fi
+
+patch -R -p1 --quiet </tmp/restash-save.patch

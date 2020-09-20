@@ -1,0 +1,155 @@
+#!/bin/bash
+# Last updated on 9 Aug 2019
+
+#set -x
+src=`pwd | grep -o ".*OCTEON-SDK"`
+i=10
+if [ "$src" != "" ] && [ -f $src/cscope.out ]; then
+		echo "In SDK directory"
+		i=0
+else 
+		src=.
+fi
+
+GREP_IGNORE=""
+IGNORE_LIST=""
+APPEND_LIST=""
+LAST_IGNORE_LIST=""
+LAST_APPEND_LIST=""
+rebuild=0
+follow_symlinks=0 
+cscope_opt="-p 7 -d -C"
+fullclean=0
+while getopts "p:i:a:lrsR" opt; do
+  case $opt in
+    l)  
+      src=.
+      i=0
+      echo "Forced to use local cscope.out"
+      ;; 
+    p)
+      cscope_opt="$cscope_opt -p$OPTARG"
+      ;;
+    r)
+      rebuild=1
+      ;;
+    R)
+      rebuild=1
+      fullclean=1
+      ;;
+    s)
+      follow_symlinks=1
+      ;;
+    i)
+      IGNORE_LIST="$OPTARG $IGNORE_LIST"
+      ;;
+    a)
+      T=`realpath $OPTARG`
+      APPEND_LIST="$T $APPEND_LIST"
+      ;;
+    \?) 
+      echo "Invalid option: -$OPTARG" >&2
+      echo "Usage: $(basename $0) [-lrs] [-i <dir_name>] [ -p <dir count> ]"
+      echo "\t\t -l Force local dir cscope build"
+      echo "\t\t -s follow symlinks in cscope build"
+      echo "\t\t -i <dir_name> ignore directory"
+      echo "\t\t -a <dir_name> append directory to sources"
+      exit 1
+      ;;  
+  esac
+done
+
+lsrc=.
+while [[ $i -ne 0 ]];
+do
+
+	if [ -f $lsrc/cscope.out ]; then
+		src=$lsrc
+		break
+	fi
+	lsrc=$lsrc/..
+	i=`expr $i - 1`
+done
+
+if [[ $rebuild -ne 0 ]] && [ -f $src/cscope.out ]
+then
+	echo "Removing old cscope DB files for rebuild "
+	rm -vf $src/cscope.out $src/cscope.in.out $src/cscope.po.out
+	rm -vf $src/cscope.files
+	if [[ $fullclean -ne 0 ]] && [ -f $src/cscope.ignore ]
+	then
+		rm -vf $src/cscope.ignore
+	fi
+fi
+
+# Look for preconfigured opt
+if [ -f $src/cscope.opt ]
+then
+	. $src/cscope.opt
+
+	for d in $LAST_IGNORE_LIST
+	do
+		IGNORE_LIST="$IGNORE_LIST $d"
+	done
+	
+	for d in $LAST_APPEND_LIST
+	do
+		APPEND_LIST="$APPEND_LIST $d"
+	done
+
+	rm -rf $src/cscope.opt.bkp
+	mv $src/cscope.opt $src/cscope.opt.bkp
+	echo "APPEND_LIST=$APPEND_LIST"
+	echo "IGNORE_LIST=$IGNORE_LIST"
+fi
+
+# Save back options
+if [[ "$IGNORE_LIST" != "" ]] || [[ "$APPEND_LIST" != "" ]]
+then
+	echo "LAST_IGNORE_LIST=\"$IGNORE_LIST\"" >$src/cscope.opt
+	echo "LAST_APPEND_LIST=\"$APPEND_LIST\"" >>$src/cscope.opt
+fi
+
+for d in $IGNORE_LIST
+do
+	GREP_IGNORE="-e $d $GREP_IGNORE"
+done
+
+if [ -f $src/cscope.out ]; then
+		echo "Using cscope DB from " $src
+else
+	echo "Building cscope DB from " $src
+	if [[ $follow_symlinks -ne 1 ]]; then
+		find_opts="-H"
+	else
+		find_opts="-L"
+	fi
+	pushd $src
+
+	rm -rf cscope.files
+	for dir in $PWD $APPEND_LIST
+	do
+		find $find_opts $dir -name "*.[c,h,S,s]" -type f >> cscope.files
+		find $find_opts $dir -name "*.cpp" -type f >> cscope.files
+		find $find_opts $dir -name "*.lua" -type f >> cscope.files
+		find $find_opts $dir -name "*.p4" -type f >> cscope.files
+		find $find_opts $dir -name "*.am" -type f >> cscope.files
+		find $find_opts $dir -name "*.inc" -type f >> cscope.files
+		find $find_opts $dir -name "*.py" -type f >> cscope.files
+	done
+
+	if [[ "$GREP_IGNORE" != "" ]]
+	then
+		echo "Using grep option " "$GREP_IGNORE" "to ignore directories."
+		rm cscope.files.bkp
+		mv cscope.files cscope.files.bkp
+		cat cscope.files.bkp | grep -v $GREP_IGNORE >cscope.files
+	fi
+	cscope -i cscope.files -qubk
+	popd
+fi
+export CSCOPE_DB=$src/cscope.out
+export CSCOPE_DB_VIM=$src/cscope.db.vim
+cscope $cscope_opt -f $src/cscope.out
+export -n CSCOPE_DB
+
