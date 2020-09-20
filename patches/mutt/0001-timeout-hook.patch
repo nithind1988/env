@@ -1,0 +1,120 @@
+From c6050985cd60559c661d574943d204dcd45be3c2 Mon Sep 17 00:00:00 2001
+From: Nithin Dabilpuram <ndabilpuram@marvell.com>
+Date: Thu, 24 Oct 2019 16:18:36 +0530
+Subject: [PATCH] timeout-hook
+
+---
+ PATCHES     |  1 +
+ curs_main.c |  1 +
+ hook.c      | 31 ++++++++++++++++++++++++++++++-
+ init.h      |  1 +
+ mutt.h      |  1 +
+ protos.h    |  1 +
+ 6 files changed, 35 insertions(+), 1 deletion(-)
+
+diff --git a/PATCHES b/PATCHES
+index e69de29..c071c2b 100644
+--- a/PATCHES
++++ b/PATCHES
+@@ -0,0 +1 @@
++patch-1.5.24.aw.timeouthook.1
+diff --git a/curs_main.c b/curs_main.c
+index 32925f2..75d2f29 100644
+--- a/curs_main.c
++++ b/curs_main.c
+@@ -792,6 +792,7 @@ int mutt_index_menu (void)
+       {
+         if (tag)
+           mutt_window_clearline (MuttMessageWindow, 0);
++        mutt_timeout_hook(".");
+         continue;
+       }
+ 
+diff --git a/hook.c b/hook.c
+index aae37cb..cdede58 100644
+--- a/hook.c
++++ b/hook.c
+@@ -75,7 +75,9 @@ int mutt_parse_hook (BUFFER *buf, BUFFER *s, unsigned long data, BUFFER *err)
+     goto error;
+   }
+ 
+-  mutt_extract_token (&command, s, (data & (MUTT_FOLDERHOOK | MUTT_SENDHOOK | MUTT_SEND2HOOK | MUTT_ACCOUNTHOOK | MUTT_REPLYHOOK)) ?  MUTT_TOKEN_SPACE : 0);
++  mutt_extract_token (&command, s, (data & (MUTT_FOLDERHOOK | MUTT_SENDHOOK |
++					    MUTT_SEND2HOOK | MUTT_ACCOUNTHOOK |
++					    MUTT_REPLYHOOK | MUTT_TIMEOUTHOOK)) ?  MUTT_TOKEN_SPACE : 0);
+ 
+   if (!command.data)
+   {
+@@ -640,6 +642,33 @@ LIST *mutt_crypt_hook (ADDRESS *adr)
+   return _mutt_list_hook (adr->mailbox, MUTT_CRYPTHOOK);
+ }
+ 
++
++void mutt_timeout_hook (const char *chs)
++{
++  HOOK* hook;
++  BUFFER token;
++  BUFFER err;
++  char buf[STRING];
++
++  err.data = buf;
++  err.dsize = sizeof (buf);
++  memset (&token, 0, sizeof (token));
++
++  for (hook = Hooks; hook; hook = hook->next)
++  {
++    if (! (hook->command && (hook->type & MUTT_TIMEOUTHOOK)))
++      continue;
++
++    if (mutt_parse_rc_line (hook->command, &token, &err) == -1)
++    {
++      FREE (&token.data);
++      mutt_error ("%s", err.data);
++      mutt_sleep (1);
++
++      return;
++    }
++  }
++}
+ #ifdef USE_SOCKET
+ void mutt_account_hook (const char* url)
+ {
+diff --git a/init.h b/init.h
+index cc8c7f4..5996246 100644
+--- a/init.h
++++ b/init.h
+@@ -4428,6 +4428,7 @@ const struct command_t Commands[] = {
+   { "spam",		parse_spam_list,	MUTT_SPAM },
+   { "nospam",		parse_spam_list,	MUTT_NOSPAM },
+   { "subscribe",	parse_subscribe,	0 },
++  { "timeout-hook",	mutt_parse_hook,	MUTT_TIMEOUTHOOK },
+   { "subjectrx",    parse_subjectrx_list, UL &SubjectRxList },
+   { "unsubjectrx",  parse_unsubjectrx_list, UL &SubjectRxList },
+   { "toggle",		parse_set,		MUTT_SET_INV },
+diff --git a/mutt.h b/mutt.h
+index 46302cc..c56c9cc 100644
+--- a/mutt.h
++++ b/mutt.h
+@@ -183,6 +183,7 @@ typedef enum
+ #define MUTT_CLOSEHOOK   (1<<14)
+ #endif /* USE_COMPRESSED */
+ #define MUTT_IDXFMTHOOK  (1<<15)
++#define MUTT_TIMEOUTHOOK (1<<16)
+ 
+ /* tree characters for linearize_tree and print_enriched_string */
+ #define MUTT_TREE_LLCORNER      1
+diff --git a/protos.h b/protos.h
+index 14e32f4..db8c9a0 100644
+--- a/protos.h
++++ b/protos.h
+@@ -150,6 +150,7 @@ const char *mutt_get_name (ADDRESS *);
+ char *mutt_get_parameter (const char *, PARAMETER *);
+ LIST *mutt_crypt_hook (ADDRESS *);
+ char *mutt_make_date (char *, size_t);
++void mutt_timeout_hook (const char *);
+ 
+ const char *mutt_make_version (void);
+ 
+-- 
+2.8.4
+
