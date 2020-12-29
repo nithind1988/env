@@ -13,6 +13,7 @@ import os
 import signal
 import difflib
 import re
+import signal
 from subprocess import DEVNULL
 from threading import Timer
 ethdev_name="enP2p1s0v2"
@@ -369,18 +370,24 @@ os.system(str(cmd))
 cmd = "echo 0 >/proc/sys/net/ipv6/conf/%s/router_solicitations" % ethdev_name
 os.system(str(cmd))
 
+def signal_handler(sig, frame):
+	print('You pressed Ctrl+C!. Killing tcpdump!!!')
+	os.kill(full.pid, signal.SIGKILL)
+	sys.exit(0)
+
 # Start a full capture if requested
 if capture_rx != 0:
 	full = subprocess.Popen(['tcpdump', '-U', '--immediate-mode', '-i', str(ethdev_name),
 				'-w', 'full.pcap', '-s 0'], stdout=subprocess.PIPE,
 				stderr=DEVNULL)
 	time.sleep(4)
+	signal.signal(signal.SIGINT, signal_handler)
 
 while count < pkt_bursts:
-	a[0] = a[0] + (1 << 8)
-	a6[0] = a6[0] + (1 << 16)
 	dip = str(a[0])
 	dip6 = str(a6[0])
+	a[0] = a[0] + (1)
+	a6[0] = a6[0] + (1 << 16)
 	name = str(ethdev_name)
 	pkt_list = []
 	set_string = 'S#%u#' % count
