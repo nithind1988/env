@@ -21,15 +21,15 @@ dutmac = "f2:e1:a8:29:ab:ba"
 testermac = "2E:8F:CC:AD:7A:9F"
 capture_rx=1
 recv_sanity=1
-sizeinc = 7
+sizeinc = 13
 size = 64#7000#7000#128#7000
 minsize = size
-maxsize = 7000#9000#1400#8512#1400#9000
+maxsize = 1300#1400#8512#1400#9000
 dump = 0
 burst_size = 1
-pkt_bursts, flows = (1024, 1)
+pkt_bursts, flows = (512, 1)
 good_checksum=0
-inner_checksum_dontcare=1
+inner_checksum_dontcare=0
 
 #default bool opts
 opt_dict = {
@@ -293,17 +293,17 @@ def tun_ip_udp(s_port, d_port):
 def tun_ip6_udp(s_port, d_port):
 	return Ether(dst=dmac)/IPv6(dst=tundip6)/UDP(dport=int(d_port), sport=int(s_port), chksum=0xdead)
 
-def in_ip_tcp(d_ip, s_port, d_port, string):
+def in_ip_tcp(d_ip, s_port, d_port):
 	if inner_checksum_dontcare == 0:
-		return IP(dst=d_ip,chksum=0xbeef, ttl=(1,1))/TCP(dport=int(d_port), sport=int(s_port), flags=tcp_flags,chksum=0xdead)/Raw(string)
+		return IP(dst=d_ip,chksum=0xbeef, ttl=(1,1))/TCP(dport=int(d_port), sport=int(s_port), flags=tcp_flags,chksum=0xdead)
 	else:
-		return IP(dst=d_ip, ttl=(1,1))/TCP(dport=int(d_port), sport=int(s_port), flags=tcp_flags)/Raw(string)
+		return IP(dst=d_ip, ttl=(1,1))/TCP(dport=int(d_port), sport=int(s_port), flags=tcp_flags)
 
-def in_ip6_tcp(d_ip6, s_port, d_port, string):
+def in_ip6_tcp(d_ip6, s_port, d_port):
 	if inner_checksum_dontcare == 0:
-		return IPv6(dst=d_ip6)/TCP(dport=int(d_port), sport=int(s_port), flags=tcp_flags,chksum=0xdead)/Raw(string)
+		return IPv6(dst=d_ip6)/TCP(dport=int(d_port), sport=int(s_port), flags=tcp_flags,chksum=0xdead)
 	else:
-		return IPv6(dst=d_ip6)/TCP(dport=int(d_port), sport=int(s_port), flags=tcp_flags)/Raw(string)
+		return IPv6(dst=d_ip6)/TCP(dport=int(d_port), sport=int(s_port), flags=tcp_flags)
 
 def geneve(vni_id, proto_id):
 	return scapy.contrib.geneve.GENEVE(vni=int(vni_id), proto=int(proto_id))
@@ -403,203 +403,204 @@ while count < pkt_bursts:
 		#Standard set of ctrl packets
 		if ctrl_pkts != 0:
 			for pkt in ctrl_pkt_list:
-				pkt_list += sendp(pkt,count=1,iface=str(name), verbose=0, return_packets=1)
+				pkt_list += pkt
 				pkttype += 1
 		#IPv4 PTP
 		if ipv4_ptp != 0:
-			string = pkt_data_str(set_string, 'IPv4PTP', size)
-			pkt = Ether(dst=dmac,type=0x88f7)/"\x00\x02"/Raw(string)
-			pkt_list += sendp(pkt,count=1,iface=str(name), verbose=0, return_packets=1)
+			pkt = Ether(dst=dmac,type=0x88f7)/"\x00\x02"
+			string = pkt_data_str(set_string, 'IPv4PTP', size - len(pkt))
+			pkt = pkt / Raw(string)
+			pkt_list += pkt
 			pkttype += 1
 
 		#IPv4 TCP
 		if ipv4_tcp != 0:
-			string = pkt_data_str(set_string, 'IPv4TCP', size)
-			pkt = Ether(dst=dmac)/IP(dst=dip, chksum=0xbeef, ttl=(1,1))/TCP(dport=int(dport), sport=pkttype, flags=tcp_flags,chksum=0xdead)/Raw(string)
-			clear_bad_checksum(pkt, good_checksum)
-			pkt_list += sendp(pkt,count=1,iface=str(name), verbose=0, return_packets=1)
+			pkt = Ether(dst=dmac)/IP(dst=dip, chksum=0xbeef, ttl=(1,1))/TCP(dport=int(dport), sport=pkttype, flags=tcp_flags,chksum=0xdead)
+			string = pkt_data_str(set_string, 'IPv4TCP', size - len(pkt))
+			pkt = pkt / Raw(string)
+			pkt_list += pkt
 			pkttype += 1
 
 		#IPV4 UDP
 		if ipv4_udp != 0:
-			string = pkt_data_str(set_string, 'IPv4UDP', size)
-			pkt = Ether(dst=dmac)/IP(dst=dip,chksum=0xbeef, ttl=(1,1))/UDP(dport=int(dport), sport=pkttype, chksum=0xdead)/Raw(string)
-			clear_bad_checksum(pkt, good_checksum)
-			pkt_list += sendp(pkt,count=1,iface=str(name), verbose=0, return_packets=1)
+			pkt = Ether(dst=dmac)/IP(dst=dip,chksum=0xbeef, ttl=(1,1))/UDP(dport=int(dport), sport=pkttype, chksum=0xdead)
+			string = pkt_data_str(set_string, 'IPv4UDP', size - len(pkt))
+			pkt = pkt / Raw(string)
+			pkt_list += pkt
 			pkttype += 1
 
 		#IPV4 SCTP
 		if ipv4_sctp != 0:
-			string = pkt_data_str(set_string, 'IPv4SCTP', size)
-			pkt = Ether(dst=dmac)/IP(dst=dip,chksum=0xbeef, ttl=(1,1))/SCTP(dport=int(dport), sport=pkttype, chksum=0)/Raw(string)
-			clear_bad_checksum(pkt, good_checksum)
-			pkt_list += sendp(pkt,count=1,iface=str(name), verbose=0, return_packets=1)
+			pkt = Ether(dst=dmac)/IP(dst=dip,chksum=0xbeef, ttl=(1,1))/SCTP(dport=int(dport), sport=pkttype, chksum=0)
+			string = pkt_data_str(set_string, 'IPv4SCTP', size - len(pkt))
+			pkt = pkt / Raw(string)
+			pkt_list += pkt
 			pkttype += 1
 
 		#IPv6 TCP
 		if ipv6_tcp != 0:
-			string = pkt_data_str(set_string, 'IPv6TCP', size)
-			pkt = Ether(dst=dmac)/in_ip6_tcp(dip6, pkttype, dport, string)
-			clear_bad_checksum(pkt, good_checksum)
-			pkt_list += sendp(pkt,count=1,iface=str(name), verbose=0, return_packets=1)
+			pkt = Ether(dst=dmac)/in_ip6_tcp(dip6, pkttype, dport)
+			string = pkt_data_str(set_string, 'IPv6TCP', size - len(pkt))
+			pkt = pkt / Raw(string)
+			pkt_list += pkt
 			pkttype += 1
 
 		#IPV6 UDP
 		if ipv6_udp != 0:
-			string = pkt_data_str(set_string, 'IPv6UDP', size)
-			pkt = Ether(dst=dmac)/IPv6(dst=dip6)/UDP(dport=int(dport), sport=pkttype, chksum=0xdead)/Raw(string)
-			clear_bad_checksum(pkt, good_checksum)
-			pkt_list += sendp(pkt,count=1,iface=str(name), verbose=0, return_packets=1)
+			pkt = Ether(dst=dmac)/IPv6(dst=dip6)/UDP(dport=int(dport), sport=pkttype, chksum=0xdead)
+			string = pkt_data_str(set_string, 'IPv6UDP', size - len(pkt))
+			pkt = pkt / Raw(string)
+			pkt_list += pkt
 			pkttype += 1
 
 		#IPV6 SCTP
 		if ipv6_sctp != 0:
-			string = pkt_data_str(set_string, 'IPv6SCTP', size)
-			pkt = Ether(dst=dmac)/IPv6()/SCTP(dport=int(dport), sport=pkttype, chksum=0xdead)/Raw(string)
-			clear_bad_checksum(pkt, good_checksum)
-			pkt_list += sendp(pkt,count=1,iface=str(name), verbose=0, return_packets=1)
+			pkt = Ether(dst=dmac)/IPv6()/SCTP(dport=int(dport), sport=pkttype, chksum=0xdead)
+			string = pkt_data_str(set_string, 'IPv6SCTP', size - len(pkt))
+			pkt = pkt / Raw(string)
+			pkt_list += pkt
 			pkttype += 1
 
 		#IPV4/GRE/IPV4/TCP
 		if ipv4_gre_ipv4_tcp != 0:
-			string = pkt_data_str(set_string, 'IPv4GREIPv4TCP', size)
-			pkt = tun_ip()/GRE(proto=0x0800)/in_ip_tcp(dip, pkttype, dport, string)
-			clear_bad_checksum(pkt, good_checksum)
-			pkt_list += sendp(pkt, count=1,iface=str(name), verbose=0, return_packets=1)
+			pkt = tun_ip()/GRE(proto=0x0800)/in_ip_tcp(dip, pkttype, dport)
+			string = pkt_data_str(set_string, 'IPv4GREIPv4TCP', size - len(pkt))
+			pkt = pkt / Raw(string)
+			pkt_list += pkt
 			pkttype += 1
 
 		#IPV6/GRE/IPV4/TCP
 		if ipv6_gre_ipv4_tcp != 0:
-			string = pkt_data_str(set_string, 'IPv6GREIPv4TCP', size)
-			pkt = tun_ip6()/GRE(proto=0x0800)/in_ip_tcp(dip, pkttype, dport, string)
-			clear_bad_checksum(pkt, good_checksum)
-			pkt_list += sendp(pkt,count=1,iface=str(name), verbose=0, return_packets=1)
+			pkt = tun_ip6()/GRE(proto=0x0800)/in_ip_tcp(dip, pkttype, dport)
+			string = pkt_data_str(set_string, 'IPv6GREIPv4TCP', size - len(pkt))
+			pkt = pkt / Raw(string)
+			pkt_list += pkt
 			pkttype += 1
 
 
 		#IPV4/GRE/IPV6/TCP
 		if ipv4_gre_ipv6_tcp != 0:
-			string = pkt_data_str(set_string, 'IPv4GREIPv6TCP', size)
-			pkt = tun_ip()/GRE(proto=0x86DD)/in_ip6_tcp(dip6, pkttype, dport, string)
-			clear_bad_checksum(pkt, good_checksum)
-			pkt_list += sendp(pkt,count=1,iface=str(name), verbose=0, return_packets=1)
+			pkt = tun_ip()/GRE(proto=0x86DD)/in_ip6_tcp(dip6, pkttype, dport)
+			string = pkt_data_str(set_string, 'IPv4GREIPv6TCP', size - len(pkt))
+			pkt = pkt / Raw(string)
+			pkt_list += pkt
 			pkttype += 1
 
 		#IPV6/GRE/IPV6/TCP
 		if ipv6_gre_ipv6_tcp != 0:
-			string = pkt_data_str(set_string, 'IPv6GREIPv6TCP', size)
-			pkt = tun_ip6()/GRE(proto=0x86DD)/in_ip6_tcp(dip6, pkttype, dport, string)
-			clear_bad_checksum(pkt, good_checksum)
-			pkt_list += sendp(pkt,count=1,iface=str(name), verbose=0, return_packets=1)
+			pkt = tun_ip6()/GRE(proto=0x86DD)/in_ip6_tcp(dip6, pkttype, dport)
+			string = pkt_data_str(set_string, 'IPv6GREIPv6TCP', size - len(pkt))
+			pkt = pkt / Raw(string)
+			pkt_list += pkt
 			pkttype += 1
 
 		#IPV4/VXLAN/IPV4/TCP
 		if ipv4_vxlan_ipv4_tcp != 0:
-			string = pkt_data_str(set_string, 'IPv4VXLANIPv4TCP', size)
-			pkt = tun_ip_udp(pkttype, 4789)/VXLAN(vni=0x3355, flags=0x8)/Ether()/in_ip_tcp(dip, pkttype, dport, string)
-			clear_bad_checksum(pkt, good_checksum)
-			pkt_list += sendp(pkt,count=1,iface=str(name), verbose=0, return_packets=1)
+			pkt = tun_ip_udp(pkttype, 4789)/VXLAN(vni=0x3355, flags=0x8)/Ether()/in_ip_tcp(dip, pkttype, dport)
+			string = pkt_data_str(set_string, 'IPv4VXLANIPv4TCP', size - len(pkt))
+			pkt = pkt / Raw(string)
+			pkt_list += pkt
 			pkttype += 1
 
 		#IPV6/VXLAN/IPV4/TCP
 		if ipv6_vxlan_ipv4_tcp != 0:
-			string = pkt_data_str(set_string, 'IPv6VXLANIPv4TCP', size)
-			pkt = tun_ip6_udp(pkttype, 4789)/VXLAN(vni=0x3355, flags=0x8)/Ether()/in_ip_tcp(dip, pkttype, dport, string)
-			clear_bad_checksum(pkt, good_checksum)
-			pkt_list += sendp(pkt,count=1,iface=str(name), verbose=0, return_packets=1)
+			pkt = tun_ip6_udp(pkttype, 4789)/VXLAN(vni=0x3355, flags=0x8)/Ether()/in_ip_tcp(dip, pkttype, dport)
+			string = pkt_data_str(set_string, 'IPv6VXLANIPv4TCP', size - len(pkt))
+			pkt = pkt / Raw(string)
+			pkt_list += pkt
 			pkttype += 1
 		#IPV4/VXLAN/IPV6/TCP
 		if ipv4_vxlan_ipv6_tcp != 0:
-			string = pkt_data_str(set_string, 'IPv4VXLANIPv6TCP', size)
-			pkt = tun_ip_udp(pkttype, 4789)/VXLAN(vni=0x3355, flags=0x8)/Ether()/in_ip6_tcp(dip6, pkttype, dport, string)
-			clear_bad_checksum(pkt, good_checksum)
-			pkt_list += sendp(pkt, count=1,iface=str(name), verbose=0, return_packets=1)
+			pkt = tun_ip_udp(pkttype, 4789)/VXLAN(vni=0x3355, flags=0x8)/Ether()/in_ip6_tcp(dip6, pkttype, dport)
+			string = pkt_data_str(set_string, 'IPv4VXLANIPv6TCP', size - len(pkt))
+			pkt = pkt / Raw(string)
+			pkt_list += pkt
 			pkttype += 1
 
 		#IPV6/VXLAN/IPV6/TCP
 		if ipv6_vxlan_ipv6_tcp != 0:
-			string = pkt_data_str(set_string, 'IPv6VXLANIPv6TCP', size)
-			pkt = tun_ip6_udp(pkttype, 4789)/VXLAN(vni=0x3355, flags=0x8)/Ether()/in_ip6_tcp(dip6, pkttype, dport, string)
-			clear_bad_checksum(pkt, good_checksum)
-			pkt_list += sendp(pkt,count=1,iface=str(name), verbose=0, return_packets=1)
+			pkt = tun_ip6_udp(pkttype, 4789)/VXLAN(vni=0x3355, flags=0x8)/Ether()/in_ip6_tcp(dip6, pkttype, dport)
+			string = pkt_data_str(set_string, 'IPv6VXLANIPv6TCP', size - len(pkt))
+			pkt = pkt / Raw(string)
+			pkt_list += pkt
 			pkttype += 1
 
 		#IPV4/GENEVE/IPV4/TCP
 		if ipv4_geneve_ipv4_tcp != 0:
-			string = pkt_data_str(set_string, 'IPv4GENEVEIPv4TCP', size)
-			pkt = tun_ip_udp(pkttype, 6081)/geneve(0x3355, 0x6558)/Ether()/in_ip_tcp(dip, pkttype, dport, string)
-			clear_bad_checksum(pkt, good_checksum)
-			pkt_list += sendp(pkt,count=1,iface=str(name), verbose=0, return_packets=1)
+			pkt = tun_ip_udp(pkttype, 6081)/geneve(0x3355, 0x6558)/Ether()/in_ip_tcp(dip, pkttype, dport)
+			string = pkt_data_str(set_string, 'IPv4GENEVEIPv4TCP', size - len(pkt))
+			pkt = pkt / Raw(string)
+			pkt_list += pkt
 			pkttype += 1
 
 		#IPV6/GENEVE/IPV4/TCP
 		if ipv6_geneve_ipv4_tcp != 0:
-			string = pkt_data_str(set_string, 'IPv6GENEVEIPv4TCP', size)
-			pkt = tun_ip6_udp(pkttype, 6081)/geneve(0x3355, 0x6558)/Ether()/in_ip_tcp(dip, pkttype, dport, string)
-			clear_bad_checksum(pkt, good_checksum)
-			pkt_list += sendp(pkt,count=1,iface=str(name), verbose=0, return_packets=1)
+			pkt = tun_ip6_udp(pkttype, 6081)/geneve(0x3355, 0x6558)/Ether()/in_ip_tcp(dip, pkttype, dport)
+			string = pkt_data_str(set_string, 'IPv6GENEVEIPv4TCP', size - len(pkt))
+			pkt = pkt / Raw(string)
+			pkt_list += pkt
 			pkttype += 1
 		#IPV4/GENEVE/IPV6/TCP
 		if ipv4_geneve_ipv6_tcp != 0:
-			string = pkt_data_str(set_string, 'IPv4GENEVEIPv6TCP', size)
-			pkt = tun_ip_udp(pkttype, 6081)/geneve(0x3355, 0x6558)/Ether()/in_ip6_tcp(dip6, pkttype, dport, string)
-			clear_bad_checksum(pkt, good_checksum)
-			pkt_list += sendp(pkt, count=1,iface=str(name), verbose=0, return_packets=1)
+			pkt = tun_ip_udp(pkttype, 6081)/geneve(0x3355, 0x6558)/Ether()/in_ip6_tcp(dip6, pkttype, dport)
+			string = pkt_data_str(set_string, 'IPv4GENEVEIPv6TCP', size - len(pkt))
+			pkt = pkt / Raw(string)
+			pkt_list += pkt
 			pkttype += 1
 
 		#IPV6/GENEVE/IPV6/TCP
 		if ipv6_geneve_ipv6_tcp != 0:
-			string = pkt_data_str(set_string, 'IPv6GENEVEIPv6TCP', size)
-			pkt = tun_ip6_udp(pkttype, 6081)/geneve(0x3355, 0x6558)/Ether()/in_ip6_tcp(dip6, pkttype, dport, string)
-			clear_bad_checksum(pkt, good_checksum)
-			pkt_list += sendp(pkt,count=1,iface=str(name), verbose=0, return_packets=1)
+			pkt = tun_ip6_udp(pkttype, 6081)/geneve(0x3355, 0x6558)/Ether()/in_ip6_tcp(dip6, pkttype, dport)
+			string = pkt_data_str(set_string, 'IPv6GENEVEIPv6TCP', size - len(pkt))
+			pkt = pkt / Raw(string)
+			pkt_list += pkt
 			pkttype += 1
 		#Dot1Q IPv4 TCP
 		if dot1q_ipv4_tcp != 0:
-			string = pkt_data_str(set_string, 'Dot1QIPv4TCP', size)
-			pkt = Ether(dst=dmac)/Dot1Q()/in_ip_tcp(dip, pkttype, dport, string)
-			clear_bad_checksum(pkt, good_checksum)
-			pkt_list += sendp(pkt,count=1,iface=str(name), verbose=0, return_packets=1)
+			pkt = Ether(dst=dmac)/Dot1Q()/in_ip_tcp(dip, pkttype, dport)
+			string = pkt_data_str(set_string, 'Dot1QIPv4TCP', size - len(pkt))
+			pkt = pkt / Raw(string)
+			pkt_list += pkt
 			pkttype += 1
 
 		#Dot1Q IPv6 TCP
 		if dot1q_ipv6_tcp != 0:
-			string = pkt_data_str(set_string, 'Dot1QIPv6TCP', size)
-			pkt = Ether(dst=dmac)/Dot1Q()/in_ip6_tcp(dip6, pkttype, dport, string)
-			clear_bad_checksum(pkt, good_checksum)
-			pkt_list += sendp(pkt,count=1,iface=str(name), verbose=0, return_packets=1)
+			pkt = Ether(dst=dmac)/Dot1Q()/in_ip6_tcp(dip6, pkttype, dport)
+			string = pkt_data_str(set_string, 'Dot1QIPv6TCP', size - len(pkt))
+			pkt = pkt / Raw(string)
+			pkt_list += pkt
 			pkttype += 1
 
 		#Dot1Q/IPV4/GRE/IPV4/TCP
 		if dot1q_ipv4_gre_ipv4_tcp != 0:
-			string = pkt_data_str(set_string, 'Dot1QIPv4GREIPv4TCP', size)
-			pkt = Ether(dst=dmac)/Dot1Q()/IP(chksum=0xdead)/GRE(proto=0x0800)/in_ip_tcp(dip, pkttype, dport, string)
-			clear_bad_checksum(pkt, good_checksum)
-			pkt_list += sendp(pkt,count=1,iface=str(name), verbose=0, return_packets=1)
+			pkt = Ether(dst=dmac)/Dot1Q()/IP(chksum=0xdead)/GRE(proto=0x0800)/in_ip_tcp(dip, pkttype, dport)
+			string = pkt_data_str(set_string, 'Dot1QIPv4GREIPv4TCP', size - len(pkt))
+			pkt = pkt / Raw(string)
+			pkt_list += pkt
 			pkttype += 1
 
 		#Dot1AD Dot1Q IPv4 TCP
 		if dot1ad_dot1q_ipv4_tcp != 0:
-			string = pkt_data_str(set_string, 'Dot1ADDot1QIPv4TCP', size)
-			pkt = Ether(dst=dmac)/Dot1AD()/Dot1Q()/in_ip_tcp(dip, pkttype, dport, string)
-			clear_bad_checksum(pkt, good_checksum)
-			pkt_list += sendp(pkt,count=1,iface=str(name), verbose=0, return_packets=1)
+			pkt = Ether(dst=dmac)/Dot1AD()/Dot1Q()/in_ip_tcp(dip, pkttype, dport)
+			string = pkt_data_str(set_string, 'Dot1ADDot1QIPv4TCP', size - len(pkt))
+			pkt = pkt / Raw(string)
+			pkt_list += pkt
 			pkttype += 1
 
 		#Dot1AD Dot1Q IPv6 TCP
 		if dot1ad_dot1q_ipv6_tcp != 0:
-			string = pkt_data_str(set_string, 'Dot1ADDot1QIPv6TCP', size)
-			pkt = Ether(dst=dmac)/Dot1AD()/Dot1Q()/in_ip6_tcp(dip6, pkttype, dport, string)
-			clear_bad_checksum(pkt, good_checksum)
-			pkt_list += sendp(pkt,count=1,iface=str(name), verbose=0, return_packets=1)
+			pkt = Ether(dst=dmac)/Dot1AD()/Dot1Q()/in_ip6_tcp(dip6, pkttype, dport)
+			string = pkt_data_str(set_string, 'Dot1ADDot1QIPv6TCP', size - len(pkt))
+			pkt = pkt / Raw(string)
+			pkt_list += pkt
 			pkttype += 1
 
 		#Dot1AD/Dot1Q/IPV4/GRE/IPV4/TCP
 		if dot1ad_dot1q_ipv4_gre_ipv4_tcp != 0:
-			string = pkt_data_str(set_string, 'Dot1ADDot1QIPv4GREIPv4TCP', size)
-			pkt = Ether(dst=dmac)/Dot1AD()/Dot1Q()/IP(chksum=0xdead)/GRE(proto=0x0800)/in_ip_tcp(dip, pkttype, dport, string)
-			clear_bad_checksum(pkt, good_checksum)
-			pkt_list += sendp(pkt,count=1,iface=str(name), verbose=0, return_packets=1)
+			pkt = Ether(dst=dmac)/Dot1AD()/Dot1Q()/IP(chksum=0xdead)/GRE(proto=0x0800)/in_ip_tcp(dip, pkttype, dport)
+			string = pkt_data_str(set_string, 'Dot1ADDot1QIPv4GREIPv4TCP', size - len(pkt))
+			pkt = pkt / Raw(string)
+			pkt_list += pkt
 			pkttype += 1
 
 		# Dump packets to pkts.h
@@ -607,6 +608,13 @@ while count < pkt_bursts:
 			for pkt in pkt_list:
 				pkt_data_dump(pkt)
 
+	for pkt in pkt_list:
+		clear_bad_checksum(pkt, good_checksum)
+	# Send burst
+	sendp(pkt_list, count=1, iface=str(name), verbose=0, return_packets=0)
+
+	#printf("Sent pkt of size %u\n" % size)
+	#time.sleep(4)
 	count = count + 1
 	total_pkts_count = total_pkts_count + len(pkt_list)
 	printf("\r")
