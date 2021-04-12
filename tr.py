@@ -17,18 +17,18 @@ import signal
 from subprocess import DEVNULL
 from threading import Timer
 ethdev_name="enP2p1s0v2"
-dutmac = "f2:e1:a8:29:ab:ba"
+dutmac = "3e:23:24:7c:6a:b5"
 testermac = "2E:8F:CC:AD:7A:9F"
 capture_rx=1
 recv_sanity=1
 sizeinc = 13
 size = 64#7000#7000#128#7000
 minsize = size
-maxsize = 1300#1400#8512#1400#9000
+maxsize = 1400#1400#8512#1400#9000
 dump = 0
 burst_size = 1
-pkt_bursts, flows = (512, 1)
-good_checksum=0
+pkt_bursts, flows = (128, 128)
+good_checksum=1
 inner_checksum_dontcare=0
 
 #default bool opts
@@ -59,9 +59,11 @@ opt_dict = {
 'dot1ad_dot1q_ipv4_gre_ipv4_tcp':0,
 'ipv4_ptp':0,
 'ctrl_pkts':0,
+'inb_ipsec':0,
+'outb_ipsec':0,
 }
 
-ipdststart = { 0: "192.18.0.1",
+ipdststart = { 0: "192.18.0.0",
 	       1: "172.25.14.1",
 	       2: "172.25.15.1",
 	       3: "172.25.16.1",
@@ -74,8 +76,12 @@ ipdststart = { 0: "192.18.0.1",
 	       10: "172.25.23.1",
 	       11: "172.25.24.1", }
 dmac = dutmac#"22:E7:F5:31:C0:C0"#"3E:5F:32:15:AD:23"#"8E:94:98:7D:57:E8"#"3A:58:C0:65:1C:79"#"12:4e:31:15:b0:1b"
-tundip = "1.1.1.2"
-tundip6 = "::1.1.1.2"
+sip = "193.18.0.1"
+sip6 = "::193.18.0.1"
+tundip = "1.1.1.1"
+tundip6 = "::1.1.1.1"
+tunsip = "2.1.1.1"
+tunsip6 = "::2.1.1.1"
 dport = 9
 tcp_flags = "PAFC"
 
@@ -101,7 +107,7 @@ recv_file = None
 buf = ""
 array_name_str = "static uint8_t *test_pkt[] = {\n"
 array_len_str = "static uint16_t test_pkt_len[] = {\n"
-dump_file = "/home/build/dpdk/96xx/dpdk/app/test-pmd/pkts.h"
+dump_file = "/home/build/dpdk/96xx/dpdk-cavium/app/test-pmd/pkts.h"
 sent_file_name = "./sent.txt"
 expect_file_name = "./expect.txt"
 recv_file_name = "./recv.txt"
@@ -282,16 +288,16 @@ def sniff_and_check_sanity(sent_list, recv_list):
 
 # Helper functions
 def tun_ip():
-	return Ether(dst=dmac)/IP(dst=tundip,chksum=0xdead)
+	return Ether(dst=dmac)/IP(dst=tundip,src=tunsip,chksum=0xdead)
 
 def tun_ip6():
-	return Ether(dst=dmac)/IPv6(dst=tundip6)
+	return Ether(dst=dmac)/IPv6(dst=tundip6,src=tunsip6)
 
 def tun_ip_udp(s_port, d_port):
-	return Ether(dst=dmac)/IP(dst=tundip,chksum=0xdead)/UDP(dport=int(d_port), sport=int(s_port), chksum=0xdead)
+	return Ether(dst=dmac)/IP(dst=tundip,src=tunsip, chksum=0xdead)/UDP(dport=int(d_port), sport=int(s_port), chksum=0xdead)
 
 def tun_ip6_udp(s_port, d_port):
-	return Ether(dst=dmac)/IPv6(dst=tundip6)/UDP(dport=int(d_port), sport=int(s_port), chksum=0xdead)
+	return Ether(dst=dmac)/IPv6(dst=tundip6, src=tunsip6)/UDP(dport=int(d_port), sport=int(s_port), chksum=0xdead)
 
 def in_ip_tcp(d_ip, s_port, d_port):
 	if inner_checksum_dontcare == 0:
@@ -341,6 +347,8 @@ for opt in opt_dict:
 	exec("%s = %d" % (opt,opt_dict[opt]))
 	if opt == "good_checksum":
 		continue
+	if opt == "inb_ipsec" or opt == "outb_ipsec":
+		continue
 	if opt == "ctrl_pkts":
 		if int(opt_dict[opt]) != 0:
 			flow_types += len(ctrl_pkt_list)
@@ -364,11 +372,15 @@ os.system(str(cmd))
 # Enable interface
 cmd = "ifconfig %s up" % ethdev_name
 os.system(str(cmd))
-# Disable ip6 da and ra
+# Disable ip6 da AND Ra
 cmd = "echo 0 >/proc/sys/net/ipv6/conf/%s/dad_transmits" % ethdev_name
 os.system(str(cmd))
 cmd = "echo 0 >/proc/sys/net/ipv6/conf/%s/router_solicitations" % ethdev_name
 os.system(str(cmd))
+
+if os.path.exists("tr_files") == 0:
+	os.mkdir('tr_files')
+os.chdir('./tr_files')
 
 def signal_handler(sig, frame):
 	print('You pressed Ctrl+C!. Killing tcpdump!!!')
@@ -382,6 +394,40 @@ if capture_rx != 0:
 				stderr=DEVNULL)
 	time.sleep(4)
 	signal.signal(signal.SIGINT, signal_handler)
+
+if inb_ipsec != 0 or outb_ipsec != 0:
+	sa = SecurityAssociation(ESP, spi=0x13, crypt_algo='AES-GCM',
+				 crypt_key=b'sixteenbytes keydpdk',
+				 tunnel_header=IP(src=tunsip, dst=tundip))
+	# Write out DPDK conf for the same
+	spi=sa.spi
+	cipher_key = ':'.join(hex(x)[2:] for x in sa.crypt_key)
+	cipher_key = cipher_key + ':' + ':'.join(hex(x)[2:] for x in sa.crypt_salt)
+	offloadopt = 'type inline-protocol-offload port_id 0'
+	if os.path.isfile('gw.conf'):
+		os.remove('gw.conf')
+	fd = open('gw.conf', "wb+")
+
+	if inb_ipsec != 0:
+		fprintf(fd, 'sp ipv4 in esp protect %u pri 1 dst 0.0.0.0/0 sport 0:65535 dport 0:65535\n' % spi)
+		fprintf(fd, 'sa in %u aead_algo aes-128-gcm aead_key %s ' % (spi, cipher_key))
+		fprintf(fd, 'mode ipv4-tunnel src %s dst %s %s\n' % (tunsip, tundip, offloadopt))
+	else:
+		fprintf(fd, 'sp ipv4 out esp protect %u pri 1 dst 192.18.0.0/24	sport 0:65535 dport 0:65535\n' % spi)
+		fprintf(fd, 'sa out %u aead_algo aes-128-gcm aead_key %s ' % (spi, cipher_key))
+		fprintf(fd, 'mode ipv4-tunnel src %s dst %s %s\n' % (tunsip, tundip, offloadopt))
+
+	fprintf(fd, 'neigh port 0 11:22:33:44:55:66\n')
+	fprintf(fd, 'rt ipv4 dst 192.18.0.0/16 port 0\n')
+	fprintf(fd, 'rt ipv4 dst 2.1.0.0/16 port 0\n')
+
+	# Dummy SA out to trigger LF setup
+#fprintf(fd, 'sa out 109999 aead_algo aes-128-gcm aead_key %s ' % cipher_key)
+#	fprintf(fd, 'mode ipv4-tunnel src %s dst %s %s\n' % (tunsip, tundip, offloadopt))
+	fd.close()
+	c = input("IPSec-GW conf stored at gw.conf, hit any key to continue: ")
+
+
 
 while count < pkt_bursts:
 	dip = str(a[0])
@@ -415,7 +461,7 @@ while count < pkt_bursts:
 
 		#IPv4 TCP
 		if ipv4_tcp != 0:
-			pkt = Ether(dst=dmac)/IP(dst=dip, chksum=0xbeef, ttl=(1,1))/TCP(dport=int(dport), sport=pkttype, flags=tcp_flags,chksum=0xdead)
+			pkt = Ether(dst=dmac)/IP(dst=dip, src=sip, chksum=0xbeef, ttl=(1,1))/TCP(dport=int(dport), sport=pkttype, flags=tcp_flags,chksum=0xdead)
 			string = pkt_data_str(set_string, 'IPv4TCP', size - len(pkt))
 			pkt = pkt / Raw(string)
 			pkt_list += pkt
@@ -423,7 +469,7 @@ while count < pkt_bursts:
 
 		#IPV4 UDP
 		if ipv4_udp != 0:
-			pkt = Ether(dst=dmac)/IP(dst=dip,chksum=0xbeef, ttl=(1,1))/UDP(dport=int(dport), sport=pkttype, chksum=0xdead)
+			pkt = Ether(dst=dmac)/IP(dst=dip,src=sip, chksum=0xbeef, ttl=(1,1))/UDP(dport=int(dport), sport=pkttype, chksum=0xdead)
 			string = pkt_data_str(set_string, 'IPv4UDP', size - len(pkt))
 			pkt = pkt / Raw(string)
 			pkt_list += pkt
@@ -431,7 +477,7 @@ while count < pkt_bursts:
 
 		#IPV4 SCTP
 		if ipv4_sctp != 0:
-			pkt = Ether(dst=dmac)/IP(dst=dip,chksum=0xbeef, ttl=(1,1))/SCTP(dport=int(dport), sport=pkttype, chksum=0)
+			pkt = Ether(dst=dmac)/IP(dst=dip,src=sip,chksum=0xbeef, ttl=(1,1))/SCTP(dport=int(dport), sport=pkttype, chksum=0)
 			string = pkt_data_str(set_string, 'IPv4SCTP', size - len(pkt))
 			pkt = pkt / Raw(string)
 			pkt_list += pkt
@@ -447,7 +493,7 @@ while count < pkt_bursts:
 
 		#IPV6 UDP
 		if ipv6_udp != 0:
-			pkt = Ether(dst=dmac)/IPv6(dst=dip6)/UDP(dport=int(dport), sport=pkttype, chksum=0xdead)
+			pkt = Ether(dst=dmac)/IPv6(dst=dip6, src=sip6)/UDP(dport=int(dport), sport=pkttype, chksum=0xdead)
 			string = pkt_data_str(set_string, 'IPv6UDP', size - len(pkt))
 			pkt = pkt / Raw(string)
 			pkt_list += pkt
@@ -608,10 +654,18 @@ while count < pkt_bursts:
 			for pkt in pkt_list:
 				pkt_data_dump(pkt)
 
+	new_pkt_list = []
 	for pkt in pkt_list:
-		clear_bad_checksum(pkt, good_checksum)
+		if inb_ipsec != 0:
+			# Checksum is always good for ipsec
+			clear_bad_checksum(pkt, 1)
+			l = pkt[Ether].payload
+			new_pkt_list += Ether(dst=dmac)/sa.encrypt(l)
+		else:
+			clear_bad_checksum(pkt, good_checksum)
+			new_pkt_list +=  pkt
 	# Send burst
-	sendp(pkt_list, count=1, iface=str(name), verbose=0, return_packets=0)
+	sendp(new_pkt_list, count=1, iface=str(name), verbose=0, return_packets=0)
 
 	#printf("Sent pkt of size %u\n" % size)
 	#time.sleep(4)
@@ -682,8 +736,6 @@ if capture_rx != 0:
 	fdr = open('full-recv.payload', "wb+")
 
 	sent_list = sniff(offline="full-sent.pcap")
-	for pkt in sent_list:
-		dump_pkt_load(pkt, fds)
 
 	recv_list = sniff(offline="full-recv.pcap")
 	if len(recv_list) != 0:
@@ -706,6 +758,27 @@ if capture_rx != 0:
 		recv_list = new_recv_list
 		if min_pad != 0 or max_pad != 0 :
 			printf("Removed padding in range of %uB..%uB from %u/%u packets!!!\n" % (min_pad, max_pad, i, len(recv_list)))
+
+	if inb_ipsec != 0:
+		os.rename('full-sent.pcap', 'full-sent-cipher.pcap')
+		cipher_sent_list = sent_list
+		sent_list = []
+		for pkt in cipher_sent_list:
+			sent_list += Ether(dst=dmac)/sa.decrypt(pkt[Ether].payload)
+		# Write plain pkts out
+		wrpcap('full-sent.pcap', sent_list)
+
+	if outb_ipsec != 0:
+		os.rename('full-recv.pcap', 'full-recv-cipher.pcap')
+		cipher_recv_list = recv_list
+		recv_list = []
+		for pkt in cipher_recv_list:
+			recv_list += Ether(dst=dmac)/sa.decrypt(pkt[Ether].payload)
+		# Write plain pkts out
+		wrpcap('full-recv.pcap', recv_list)
+
+	for pkt in sent_list:
+		dump_pkt_load(pkt, fds)
 
 	for pkt in recv_list:
 		dump_pkt_load(pkt, fdr)
