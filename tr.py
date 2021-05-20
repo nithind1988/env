@@ -30,6 +30,8 @@ burst_size = 1
 pkt_bursts, flows = (128, 128)
 good_checksum=1
 inner_checksum_dontcare=0
+spi_base = 0x13
+ipsec_sas = 16
 
 #default bool opts
 opt_dict = {
@@ -104,6 +106,8 @@ fo = None
 sent_file = None
 expect_file = None
 recv_file = None
+sessions = [None] * 256
+
 buf = ""
 array_name_str = "static uint8_t *test_pkt[] = {\n"
 array_len_str = "static uint16_t test_pkt_len[] = {\n"
@@ -395,39 +399,49 @@ if capture_rx != 0:
 	time.sleep(4)
 	signal.signal(signal.SIGINT, signal_handler)
 
-if inb_ipsec != 0 or outb_ipsec != 0:
-	sa = SecurityAssociation(ESP, spi=0x13, crypt_algo='AES-GCM',
+if inb_ipsec == 0 and outb_ipsec == 0:
+	ipsec_sas = 0
+
+if ipsec_sas != 0:
+	if os.path.isfile('gw.conf'):
+		os.remove('gw.conf')
+	gw_fd = open('gw.conf', "wb+")
+
+for i in range(ipsec_sas):
+	spi = 0x13 + i
+	sa = SecurityAssociation(ESP, spi=int(spi), crypt_algo='AES-GCM',
 				 crypt_key=b'sixteenbytes keydpdk',
 				 tunnel_header=IP(src=tunsip, dst=tundip))
+	sessions[i] = sa
 	# Write out DPDK conf for the same
-	spi=sa.spi
 	cipher_key = ':'.join(hex(x)[2:] for x in sa.crypt_key)
 	cipher_key = cipher_key + ':' + ':'.join(hex(x)[2:] for x in sa.crypt_salt)
 	offloadopt = 'type inline-protocol-offload port_id 0'
-	if os.path.isfile('gw.conf'):
-		os.remove('gw.conf')
-	fd = open('gw.conf', "wb+")
 
 	if inb_ipsec != 0:
-		fprintf(fd, 'sp ipv4 in esp protect %u pri 1 dst 0.0.0.0/0 sport 0:65535 dport 0:65535\n' % spi)
-		fprintf(fd, 'sa in %u aead_algo aes-128-gcm aead_key %s ' % (spi, cipher_key))
-		fprintf(fd, 'mode ipv4-tunnel src %s dst %s %s\n' % (tunsip, tundip, offloadopt))
+		fprintf(gw_fd, 'sp ipv4 in esp protect %u pri 1 dst 192.18.%u.0/24 sport 0:65535 dport 0:65535\n' % (spi, i))
+		fprintf(gw_fd, 'sa in %u aead_algo aes-128-gcm aead_key %s ' % (spi, cipher_key))
+		fprintf(gw_fd, 'mode ipv4-tunnel src %s dst %s %s\n' % (tunsip, tundip, offloadopt))
 	else:
-		fprintf(fd, 'sp ipv4 out esp protect %u pri 1 dst 192.18.0.0/24	sport 0:65535 dport 0:65535\n' % spi)
-		fprintf(fd, 'sa out %u aead_algo aes-128-gcm aead_key %s ' % (spi, cipher_key))
-		fprintf(fd, 'mode ipv4-tunnel src %s dst %s %s\n' % (tunsip, tundip, offloadopt))
+		fprintf(gw_fd, 'sp ipv4 out esp protect %u pri 1 dst 192.18.%u.0/24 sport 0:65535 dport 0:65535\n' % (spi, i))
+		fprintf(gw_fd, 'sa out %u aead_algo aes-128-gcm aead_key %s ' % (spi, cipher_key))
+		fprintf(gw_fd, 'mode ipv4-tunnel src %s dst %s %s\n' % (tunsip, tundip, offloadopt))
 
-	fprintf(fd, 'neigh port 0 11:22:33:44:55:66\n')
-	fprintf(fd, 'rt ipv4 dst 192.18.0.0/16 port 0\n')
-	fprintf(fd, 'rt ipv4 dst 2.1.0.0/16 port 0\n')
+	if i == ipsec_sas - 1:
+		fprintf(gw_fd, 'neigh port 0 11:22:33:44:55:66\n')
+		fprintf(gw_fd, 'rt ipv4 dst 192.18.0.0/16 port 0\n')
+		fprintf(gw_fd, 'rt ipv4 dst 2.1.0.0/16 port 0\n')
 
 	# Dummy SA out to trigger LF setup
 #fprintf(fd, 'sa out 109999 aead_algo aes-128-gcm aead_key %s ' % cipher_key)
 #	fprintf(fd, 'mode ipv4-tunnel src %s dst %s %s\n' % (tunsip, tundip, offloadopt))
-	fd.close()
+
+if ipsec_sas != 0:
+	gw_fd.close()
 	c = input("IPSec-GW conf stored at gw.conf, hit any key to continue: ")
 
-
+sa = sessions[0]
+next_sa = sa
 
 while count < pkt_bursts:
 	dip = str(a[0])
@@ -657,19 +671,31 @@ while count < pkt_bursts:
 	new_pkt_list = []
 	for pkt in pkt_list:
 		if inb_ipsec != 0:
+			sa = next_sa
+
 			# Checksum is always good for ipsec
 			clear_bad_checksum(pkt, 1)
 			l = pkt[Ether].payload
 			new_pkt_list += Ether(dst=dmac)/sa.encrypt(l)
 		else:
 			clear_bad_checksum(pkt, good_checksum)
-			new_pkt_list +=  pkt
+			new_pkt_list += pkt
 	# Send burst
 	sendp(new_pkt_list, count=1, iface=str(name), verbose=0, return_packets=0)
 
 	#printf("Sent pkt of size %u\n" % size)
 	#time.sleep(4)
 	count = count + 1
+
+	# Move to next sa 
+	if  ipsec_sas != 0:
+		sa_i = count % ipsec_sas
+		next_sa = sessions[sa_i]
+		a[0] = ipaddress.ip_address(ipdststart[0])
+		a6[0] = ipaddress.ip_address("::" + ipdststart[0])
+		a[0] = a[0] + (sa_i << 8)
+		a6[0] = a6[0] + (sa_i << 24)
+
 	total_pkts_count = total_pkts_count + len(pkt_list)
 	printf("\r")
 	printf("Sent packets %u/%u" % (total_pkts_count, test_pkts_count))
@@ -677,6 +703,7 @@ while count < pkt_bursts:
 	if count % flows == 0:
 		a[0] = ipaddress.ip_address(ipdststart[0])
 		a6[0] = ipaddress.ip_address("::" + ipdststart[0])
+		next_sa = sessions[0]
 	size = size + sizeinc
 	if size > maxsize:
 	  	size = minsize
@@ -764,6 +791,9 @@ if capture_rx != 0:
 		cipher_sent_list = sent_list
 		sent_list = []
 		for pkt in cipher_sent_list:
+			spi = pkt[ESP].spi
+			idx = int(spi) - int(spi_base)
+			sa = sessions[idx]
 			sent_list += Ether(dst=dmac)/sa.decrypt(pkt[Ether].payload)
 		# Write plain pkts out
 		wrpcap('full-sent.pcap', sent_list)
@@ -773,6 +803,9 @@ if capture_rx != 0:
 		cipher_recv_list = recv_list
 		recv_list = []
 		for pkt in cipher_recv_list:
+			spi = pkt[ESP].spi
+			idx = int(spi) - int(spi_base)
+			sa = sessions[idx]
 			recv_list += Ether(dst=dmac)/sa.decrypt(pkt[Ether].payload)
 		# Write plain pkts out
 		wrpcap('full-recv.pcap', recv_list)
