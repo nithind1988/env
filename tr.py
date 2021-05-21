@@ -14,9 +14,10 @@ import signal
 import difflib
 import re
 import signal
+import argparse
 from subprocess import DEVNULL
 from threading import Timer
-ethdev_name="enP2p1s0v2"
+ethdev_name="asimnic0"
 dutmac = "3e:23:24:7c:6a:b5"
 testermac = "2E:8F:CC:AD:7A:9F"
 capture_rx=1
@@ -27,16 +28,17 @@ minsize = size
 maxsize = 1400#1400#8512#1400#9000
 dump = 0
 burst_size = 1
-pkt_bursts, flows = (128, 128)
+pkt_bursts, flows = (1, 1)
 good_checksum=1
 inner_checksum_dontcare=0
-spi_base = 0x13
 ipsec_sas = 16
+inb_ipsec = 0
+outb_ipsec = 0
 
 #default bool opts
 opt_dict = {
 'ipv4_tcp':1,
-'ipv4_udp':1,
+'ipv4_udp':0,
 'ipv4_sctp':0,
 'ipv6_tcp':0,
 'ipv6_udp':0,
@@ -45,24 +47,22 @@ opt_dict = {
 'ipv6_gre_ipv4_tcp':0,
 'ipv4_gre_ipv6_tcp':0,
 'ipv6_gre_ipv6_tcp':0,
-'ipv4_vxlan_ipv4_tcp':1,
-'ipv6_vxlan_ipv4_tcp':1,
-'ipv4_vxlan_ipv6_tcp':1,
-'ipv6_vxlan_ipv6_tcp':1,
-'ipv4_geneve_ipv4_tcp':1,
-'ipv6_geneve_ipv4_tcp':1,
-'ipv4_geneve_ipv6_tcp':1,
-'ipv6_geneve_ipv6_tcp':1,
-'dot1q_ipv4_tcp':1,
-'dot1q_ipv6_tcp':1,
+'ipv4_vxlan_ipv4_tcp':0,
+'ipv6_vxlan_ipv4_tcp':0,
+'ipv4_vxlan_ipv6_tcp':0,
+'ipv6_vxlan_ipv6_tcp':0,
+'ipv4_geneve_ipv4_tcp':0,
+'ipv6_geneve_ipv4_tcp':0,
+'ipv4_geneve_ipv6_tcp':0,
+'ipv6_geneve_ipv6_tcp':0,
+'dot1q_ipv4_tcp':0,
+'dot1q_ipv6_tcp':0,
 'dot1q_ipv4_gre_ipv4_tcp':0,
-'dot1ad_dot1q_ipv4_tcp':1,
-'dot1ad_dot1q_ipv6_tcp':1,
+'dot1ad_dot1q_ipv4_tcp':0,
+'dot1ad_dot1q_ipv6_tcp':0,
 'dot1ad_dot1q_ipv4_gre_ipv4_tcp':0,
 'ipv4_ptp':0,
 'ctrl_pkts':0,
-'inb_ipsec':0,
-'outb_ipsec':0,
 }
 
 ipdststart = { 0: "192.18.0.0",
@@ -322,65 +322,99 @@ count = 0
 flow_types = 0
 
 # Process command line args
-not_def=0
-for x in sys.argv:
-	if x == sys.argv[0]:
-		continue
+parser = argparse.ArgumentParser()
+parser.add_argument("--proto", type=str, help="Regex of protocol packets to send")
+parser.add_argument("--inb-ipsec", help="Test inbound ipsec",
+		    action="store_true")
+parser.add_argument("--outb-ipsec", help="Test outbound ipsec",
+		    action="store_true")
+parser.add_argument("--pkt-bursts", type=int, help="Number of pkt bursts to send")
+parser.add_argument("--flows", type=int, help="Number of flows to send")
+parser.add_argument("--burst-size", type=int, help="Burst size of pkt burst")
+parser.add_argument("--bad-chksum", help="Generate plain pkts with bad checksum",
+		    action="store_true")
+parser.add_argument("-i", "--interface", type=str, help="Interface to DUT",
+		    required=False, default=str(ethdev_name))
+
+opt_str = ""
+args = parser.parse_args()
+if args.inb_ipsec and args.outb_ipsec:
+	printf("Invalid arguments, both inbound and outbound cannot be enabled")
+	sys.exit(-1)
+if args.inb_ipsec:
+	inb_ipsec = 1
+	opt_str = opt_str + "inb_ipsec=1 "
+if args.outb_ipsec:
+	outb_ipsec = 1
+	opt_str = opt_str + "outb_ipsec=1 "
+if args.pkt_bursts:
+	pkt_bursts = args.pkt_bursts
+if args.flows:
+	flows = args.flows
+if args.burst_size:
+	burst_size = args.burst_size
+if args.bad_chksum:
+	good_checksum = 0
+	opt_str = opt_str + "bad_chksum=1 "
+if args.interface:
+	ethdev_name = args.interface
+
+if args.proto:
+	for key in opt_dict.keys():
+		opt_dict[key]=0
+
+	x = str(args.proto)
 	# Overriding default bool options when args are given
-	if not_def == 0:
-		not_def=1
-		printf("Overriding default bool opts\n")
-		for key in opt_dict.keys():
-			opt_dict[key]=0
+	printf("Overriding default bool opts\n")
 
 	reObj = re.compile(x)
 	for key in opt_dict.keys():
 		if(reObj.match(key)):
 			opt_dict[key]=1
 
-if recv_sanity == 1:
-	printf("####Testing received pkts sanity with DUT mac %s####\n" % str(dutmac))
-
-str1 = "bad"
-if good_checksum != 0:
-	str1 = "good"
-printf("#####Sending below protocol packets with %s cksum on %s####\n" % (str1, ethdev_name))
+opt_str = opt_str + "pkt_bursts=%u flows=%u burst_size=%u" % (pkt_bursts, flows, burst_size)
+printf("DUTMAC     : %s\n" % str(dutmac))
+printf("Interface  : %s\n" % ethdev_name)
+printf("Options    : %s\n\n" % opt_str)
+printf("Protocols for plain pkts: ")
 
 # Convert opt dict to variables
 for opt in opt_dict:
 	exec("%s = %d" % (opt,opt_dict[opt]))
-	if opt == "good_checksum":
-		continue
-	if opt == "inb_ipsec" or opt == "outb_ipsec":
-		continue
 	if opt == "ctrl_pkts":
 		if int(opt_dict[opt]) != 0:
 			flow_types += len(ctrl_pkt_list)
 			continue
 	if int(opt_dict[opt]) != 0:
-		printf("\t%s\n" % opt)
+		printf("%s " % opt)
 		flow_types += 1
+
+printf("\n##############################################################\n\n")
 
 test_pkts_count = flow_types * burst_size * pkt_bursts
 
 # Disable gro
-printf("Setting GRO off on %s\n" % ethdev_name)
+#printf("Setting GRO off on %s\n" % ethdev_name)
 cmd = "ethtool -K %s gro off" % ethdev_name
 os.system(str(cmd))
 cmd = "ethtool -k %s |grep gro" % ethdev_name
 os.system(str(cmd))
 # Enable promisc
-printf("Enabling promisc on %s\n" % ethdev_name)
+#printf("Enabling promisc on %s\n" % ethdev_name)
 cmd = "ifconfig %s promisc" % ethdev_name
 os.system(str(cmd))
 # Enable interface
 cmd = "ifconfig %s up" % ethdev_name
 os.system(str(cmd))
-# Disable ip6 da AND Ra
-cmd = "echo 0 >/proc/sys/net/ipv6/conf/%s/dad_transmits" % ethdev_name
-os.system(str(cmd))
-cmd = "echo 0 >/proc/sys/net/ipv6/conf/%s/router_solicitations" % ethdev_name
-os.system(str(cmd))
+# Disable ip6 DA and RA
+proc_path = "/proc/sys/net/ipv6/conf/%s/dad_transmits" % ethdev_name
+if os.path.exists(str(proc_path)):
+	cmd = "echo 0 >/proc/sys/net/ipv6/conf/%s/dad_transmits" % ethdev_name
+	os.system(str(cmd))
+proc_path = "/proc/sys/net/ipv6/conf/%s/router_solicitations" % ethdev_name
+if os.path.exists(str(proc_path)):
+	cmd = "echo 0 >/proc/sys/net/ipv6/conf/%s/router_solicitations" % ethdev_name
+	os.system(str(cmd))
 
 if os.path.exists("tr_files") == 0:
 	os.mkdir('tr_files')
@@ -407,8 +441,9 @@ if ipsec_sas != 0:
 		os.remove('gw.conf')
 	gw_fd = open('gw.conf', "wb+")
 
+spi_base = 0x13
 for i in range(ipsec_sas):
-	spi = 0x13 + i
+	spi = int(spi_base) + i
 	sa = SecurityAssociation(ESP, spi=int(spi), crypt_algo='AES-GCM',
 				 crypt_key=b'sixteenbytes keydpdk',
 				 tunnel_header=IP(src=tunsip, dst=tundip))
@@ -438,7 +473,7 @@ for i in range(ipsec_sas):
 
 if ipsec_sas != 0:
 	gw_fd.close()
-	c = input("IPSec-GW conf stored at gw.conf, hit any key to continue: ")
+	c = input("IPSec-GW conf stored at tr_files/gw.conf, hit any key to continue: ")
 
 sa = sessions[0]
 next_sa = sa
@@ -753,9 +788,9 @@ if capture_rx != 0:
 		os.rename('full.pcap', '%s-full.pcap' % name)
 		os.rename('full-sent.pcap', '%s-full-sent.pcap' % name)
 		os.rename('full-recv.pcap', '%s-full-recv.pcap' % name)
-		printf("Please check complete capture in %s-[full|full-sent|full-recv].pcap\n" % name)
+		printf("Please check complete capture in tr_files/%s-[full|full-sent|full-recv].pcap\n" % name)
 	else:
-		printf("Please check complete capture in [full|full-sent|full-recv].pcap\n")
+		printf("Please check complete capture in tr_files/[full|full-sent|full-recv].pcap\n")
 
 	printf("Extracting full-sent and full-recv payload\n")
 
