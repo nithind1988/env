@@ -23,9 +23,9 @@ testermac = "2E:8F:CC:AD:7A:9F"
 capture_rx=1
 recv_sanity=1
 sizeinc = 13
-size = 64#7000#7000#128#7000
-minsize = size
+minsize = 64#7000#7000#128#7000
 maxsize = 1400#1400#8512#1400#9000
+size = minsize
 dump = 0
 burst_size = 1
 pkt_bursts, flows = (1, 1)
@@ -335,6 +335,12 @@ parser.add_argument("--bad-chksum", help="Generate plain pkts with bad checksum"
 		    action="store_true")
 parser.add_argument("-i", "--interface", type=str, help="Interface to DUT",
 		    required=False, default=str(ethdev_name))
+parser.add_argument("--minsize", type=int, help="Min pkt size",
+		    required=False, default=minsize)
+parser.add_argument("--maxsize", type=int, help="Max pkt size",
+		    required=False, default=maxsize)
+parser.add_argument("--ipsec-sas", type=int, help="IPSec SA's to create",
+		    required=False, default=ipsec_sas)
 
 opt_str = ""
 args = parser.parse_args()
@@ -358,6 +364,10 @@ if args.bad_chksum:
 	opt_str = opt_str + "bad_chksum=1 "
 if args.interface:
 	ethdev_name = args.interface
+if args.minsize:
+	minsize = args.minsize
+if args.maxsize:
+	maxsize = args.maxsize
 
 if args.proto:
 	for key in opt_dict.keys():
@@ -372,7 +382,11 @@ if args.proto:
 		if(reObj.match(key)):
 			opt_dict[key]=1
 
-opt_str = opt_str + "pkt_bursts=%u flows=%u burst_size=%u" % (pkt_bursts, flows, burst_size)
+if inb_ipsec or outb_ipsec:
+	opt_str = opt_str + "ipsec_sas=%u " % ipsec_sas
+
+opt_str = opt_str + "pkt_bursts=%u flows=%u burst_size=%u " % (pkt_bursts, flows, burst_size)
+opt_str = opt_str + "minsize=%u maxsize=%u" % (minsize, maxsize)
 printf("DUTMAC     : %s\n" % str(dutmac))
 printf("Interface  : %s\n" % ethdev_name)
 printf("Options    : %s\n\n" % opt_str)
@@ -430,8 +444,8 @@ if capture_rx != 0:
 	full = subprocess.Popen(['tcpdump', '-U', '--immediate-mode', '-i', str(ethdev_name),
 				'-w', 'full.pcap', '-s 0'], stdout=subprocess.PIPE,
 				stderr=DEVNULL)
-	time.sleep(4)
 	signal.signal(signal.SIGINT, signal_handler)
+	time.sleep(4)
 
 if inb_ipsec == 0 and outb_ipsec == 0:
 	ipsec_sas = 0
@@ -477,6 +491,7 @@ if ipsec_sas != 0:
 
 sa = sessions[0]
 next_sa = sa
+size = minsize
 
 while count < pkt_bursts:
 	dip = str(a[0])
@@ -711,7 +726,11 @@ while count < pkt_bursts:
 			# Checksum is always good for ipsec
 			clear_bad_checksum(pkt, 1)
 			l = pkt[Ether].payload
-			new_pkt_list += Ether(dst=dmac)/sa.encrypt(l)
+			if pkt.firstlayer()[1].name == '802.1Q':
+				l = pkt[Dot1Q].payload
+				new_pkt_list += Ether(dst=dmac)/Dot1Q()/sa.encrypt(l)
+			else:
+				new_pkt_list += Ether(dst=dmac)/sa.encrypt(l)
 		else:
 			clear_bad_checksum(pkt, good_checksum)
 			new_pkt_list += pkt
