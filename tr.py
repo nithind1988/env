@@ -450,10 +450,13 @@ if capture_rx != 0:
 if inb_ipsec == 0 and outb_ipsec == 0:
 	ipsec_sas = 0
 
+ipsec_secgw_fname = 'gw.conf'
+if inb_ipsec == 1:
+	ipsec_secgw_fname = 'gw_i.conf'
 if ipsec_sas != 0:
-	if os.path.isfile('gw.conf'):
-		os.remove('gw.conf')
-	gw_fd = open('gw.conf', "wb+")
+	if os.path.isfile(str(ipsec_secgw_fname)):
+		os.remove(str(ipsec_secgw_fname))
+	gw_fd = open(str(ipsec_secgw_fname), "wb+")
 
 spi_base = 0x13
 for i in range(ipsec_sas):
@@ -487,7 +490,7 @@ for i in range(ipsec_sas):
 
 if ipsec_sas != 0:
 	gw_fd.close()
-	c = input("IPSec-GW conf stored at tr_files/gw.conf, hit any key to continue: ")
+	c = input("IPSec-GW conf stored at tr_files/%s, hit any key to continue:" % ipsec_secgw_fname)
 
 sa = sessions[0]
 next_sa = sa
