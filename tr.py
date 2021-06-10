@@ -339,6 +339,8 @@ parser.add_argument("--minsize", type=int, help="Min pkt size",
 		    required=False, default=minsize)
 parser.add_argument("--maxsize", type=int, help="Max pkt size",
 		    required=False, default=maxsize)
+parser.add_argument("--sizeinc", type=int, help="Pkt size increment per burst",
+		    required=False, default=sizeinc)
 parser.add_argument("--ipsec-sas", type=int, help="IPSec SA's to create",
 		    required=False, default=ipsec_sas)
 
@@ -368,6 +370,8 @@ if args.minsize:
 	minsize = args.minsize
 if args.maxsize:
 	maxsize = args.maxsize
+if args.sizeinc:
+	sizeinc = args.sizeinc
 
 if args.proto:
 	for key in opt_dict.keys():
@@ -385,7 +389,7 @@ if inb_ipsec or outb_ipsec:
 	opt_str = opt_str + "ipsec_sas=%u " % ipsec_sas
 
 opt_str = opt_str + "pkt_bursts=%u flows=%u burst_size=%u " % (pkt_bursts, flows, burst_size)
-opt_str = opt_str + "minsize=%u maxsize=%u" % (minsize, maxsize)
+opt_str = opt_str + "minsize=%u maxsize=%u sizeinc=%u" % (minsize, maxsize, sizeinc)
 printf("DUTMAC     : %s\n" % str(dutmac))
 printf("Interface  : %s\n" % ethdev_name)
 printf("Options    : %s\n\n" % opt_str)
@@ -481,7 +485,7 @@ for i in range(ipsec_sas):
 	if i == ipsec_sas - 1:
 		fprintf(gw_fd, 'neigh port 0 11:22:33:44:55:66\n')
 		fprintf(gw_fd, 'rt ipv4 dst 192.18.0.0/16 port 0\n')
-		fprintf(gw_fd, 'rt ipv4 dst 2.1.0.0/16 port 0\n')
+		fprintf(gw_fd, 'rt ipv4 dst 1.1.0.0/16 port 0\n')
 
 	# Dummy SA out to trigger LF setup
 #fprintf(fd, 'sa out 109999 aead_algo aes-128-gcm aead_key %s ' % cipher_key)
