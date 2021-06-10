@@ -373,14 +373,13 @@ if args.proto:
 	for key in opt_dict.keys():
 		opt_dict[key]=0
 
-	x = str(args.proto)
 	# Overriding default bool options when args are given
-	printf("Overriding default bool opts\n")
-
-	reObj = re.compile(x)
-	for key in opt_dict.keys():
-		if(reObj.match(key)):
-			opt_dict[key]=1
+	x = str(args.proto)
+	for k in x.split(','):
+		reObj = re.compile(k)
+		for key in opt_dict.keys():
+			if(reObj.match(key)):
+				opt_dict[key]=1
 
 if inb_ipsec or outb_ipsec:
 	opt_str = opt_str + "ipsec_sas=%u " % ipsec_sas
