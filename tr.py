@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 # Version 16/09/2020
 
@@ -18,22 +18,25 @@ import argparse
 from subprocess import DEVNULL
 from threading import Timer
 ethdev_name="asimnic0"
-dutmac = "3e:23:24:7c:6a:b5"
-testermac = "2E:8F:CC:AD:7A:9F"
+dutmac = "02:00:00:00:00:00"
+#dutmac = "3e:23:24:7c:6a:b5"#"02:00:00:00:00:01"
 capture_rx=1
 recv_sanity=1
 sizeinc = 13
 minsize = 64#7000#7000#128#7000
 maxsize = 1400#1400#8512#1400#9000
 size = minsize
-dump = 0
+dump = 1
 burst_size = 1
 pkt_bursts, flows = (1, 1)
 good_checksum=1
 inner_checksum_dontcare=0
 ipsec_sas = 16
+outb_accept_plain = 0
 inb_ipsec = 0
 outb_ipsec = 0
+transport = 0
+esn_en = 0
 
 #default bool opts
 opt_dict = {
@@ -42,6 +45,7 @@ opt_dict = {
 'ipv4_sctp':0,
 'ipv6_tcp':0,
 'ipv6_udp':0,
+'ipv6_ext_udp':0,
 'ipv6_sctp':0,
 'ipv4_gre_ipv4_tcp':0,
 'ipv6_gre_ipv4_tcp':0,
@@ -77,6 +81,7 @@ ipdststart = { 0: "192.18.0.0",
 	       9: "172.25.22.1",
 	       10: "172.25.23.1",
 	       11: "172.25.24.1", }
+smac = "02:00:00:00:01:00"
 dmac = dutmac#"22:E7:F5:31:C0:C0"#"3E:5F:32:15:AD:23"#"8E:94:98:7D:57:E8"#"3A:58:C0:65:1C:79"#"12:4e:31:15:b0:1b"
 sip = "193.18.0.1"
 sip6 = "::193.18.0.1"
@@ -89,13 +94,13 @@ tcp_flags = "PAFC"
 
 # List of control pkts
 ctrl_pkt_list = []
-ctrl_pkt_list += Ether(dst=dmac)/ARP()
-ctrl_pkt_list += Ether(dst=dmac)/IP()/ICMP()
-ctrl_pkt_list += Ether(dst=dmac)/IP()/ESP()
-ctrl_pkt_list += Ether(dst=dmac)/IPv6()/ESP()
-#ctrl_pkt_list += Ether(dst=dmac, type=0x8035)/Raw("ABCDEF")
-ctrl_pkt_list += Ether(dst=dmac)/IP()/GRE()
-#ctrl_pkt_list += Ether(dst=dmac, type=0x8847)/Raw("ABCDEF")
+#ctrl_pkt_list += Ether(src=smac,dst=dmac)/ARP()
+#ctrl_pkt_list += Ether(src=smac,dst=dmac)/IP()/ICMP()
+#ctrl_pkt_list += Ether(src=smac,dst=dmac)/IP()/ESP()
+#ctrl_pkt_list += Ether(src=smac,dst=dmac)/IPv6()/ESP()
+#ctrl_pkt_list += Ether(src=smac,dst=dmac, type=0x8035)/Raw("ABCDEF")
+ctrl_pkt_list += Ether(src=smac,dst=dmac)/IP()/GRE()
+#ctrl_pkt_list += Ether(src=smac,dst=dmac, type=0x8847)/Raw("ABCDEF")
 
 a = [None] * 1
 a6 = [None] * 1
@@ -111,12 +116,13 @@ sessions = [None] * 256
 buf = ""
 array_name_str = "static uint8_t *test_pkt[] = {\n"
 array_len_str = "static uint16_t test_pkt_len[] = {\n"
-dump_file = "/home/build/dpdk/96xx/dpdk-cavium/app/test-pmd/pkts.h"
+dump_file = "./pkts.h"
 sent_file_name = "./sent.txt"
 expect_file_name = "./expect.txt"
 recv_file_name = "./recv.txt"
 total_pkts_count = 0
 good_pkts_count = 0
+outb_plain_pkts = 0
 
 def printf(format, *args):
 	sys.stdout.write(format % args)
@@ -173,6 +179,8 @@ def pkt_name(pkt):
 			tmp = "802_1Q"
 		buf += "%s" % tmp
 		i = i + 1
+	tmp = pkt.lastlayer().name
+	buf += "_%s" % tmp
 	buf += "_%u" % count
 	return buf
 
@@ -184,15 +192,27 @@ def pkt_data_dump(pkt):
 		fo = open(dump_file, "wb+")
 	fprintf(fo, "\n")
 	name = pkt_name(pkt)
-	fprintf(fo, "static uint8_t %s[] = {" % name)
-	array_name_str += "\t%s,\n" % name
-	array_len_str += "\t%u, //%s\n" % (pkt.__len__(), name)
-	i = 0
-	for i in range(pkt.__len__()):
-		if (i % 8 == 0):
-			fprintf(fo, "\n\t")
-		fprintf(fo, "0x%0.2x, " % (pkt.__bytes__()[i]))
-	fprintf(fo, "\n};\n")
+	# Dump for Ixia
+	if dump == 2:
+		fprintf(fo, "###%s" % name)
+		i = 0
+		for i in range(pkt.__len__()):
+			if (i % 8 == 0):
+				fprintf(fo, "\n")
+			fprintf(fo, "%02x " % (pkt.__bytes__()[i]))
+	else:
+		fprintf(fo, "static uint8_t %s[] = {\n\t" % name)
+		array_name_str += "\t%s,\n" % name
+		array_len_str += "\t%u, //%s\n" % (pkt.__len__(), name)
+		i = 0
+		for i in range(pkt.__len__()):
+			if (i % 8 == 0) and (i != 0):
+				fprintf(fo, ",\n\t")
+			elif (i != 0) :
+			        fprintf(fo, ", ")
+			fprintf(fo, "0x%0.2x" % (pkt.__bytes__()[i]))
+		fprintf(fo, "\n};\n")
+	fo.flush()
 
 # Creates a string exactly of given size
 lineterm = '#' #'\n' could be used
@@ -208,7 +228,9 @@ def pkt_data_str(str1, str2, size):
 		if len(string) - last > 70 :
 			string = string + lineterm
 			last = len(string)
-	string = string + '#' + end
+	string = string + '#' 
+	if itr > 1:
+		string = string + end
 	while len(string) < size:
 	 	if len(string) + 1 == size:
 	 		string = string + '\n'
@@ -292,16 +314,16 @@ def sniff_and_check_sanity(sent_list, recv_list):
 
 # Helper functions
 def tun_ip():
-	return Ether(dst=dmac)/IP(dst=tundip,src=tunsip,chksum=0xdead)
+	return Ether(src=smac,dst=dmac)/IP(dst=tundip,src=tunsip,chksum=0xdead)
 
 def tun_ip6():
-	return Ether(dst=dmac)/IPv6(dst=tundip6,src=tunsip6)
+	return Ether(src=smac,dst=dmac)/IPv6(dst=tundip6,src=tunsip6)
 
 def tun_ip_udp(s_port, d_port):
-	return Ether(dst=dmac)/IP(dst=tundip,src=tunsip, chksum=0xdead)/UDP(dport=int(d_port), sport=int(s_port), chksum=0xdead)
+	return Ether(src=smac,dst=dmac)/IP(dst=tundip,src=tunsip, chksum=0xdead)/UDP(dport=int(d_port), sport=int(s_port), chksum=0xdead)
 
 def tun_ip6_udp(s_port, d_port):
-	return Ether(dst=dmac)/IPv6(dst=tundip6, src=tunsip6)/UDP(dport=int(d_port), sport=int(s_port), chksum=0xdead)
+	return Ether(src=smac,dst=dmac)/IPv6(dst=tundip6, src=tunsip6)/UDP(dport=int(d_port), sport=int(s_port), chksum=0xdead)
 
 def in_ip_tcp(d_ip, s_port, d_port):
 	if inner_checksum_dontcare == 0:
@@ -311,9 +333,9 @@ def in_ip_tcp(d_ip, s_port, d_port):
 
 def in_ip6_tcp(d_ip6, s_port, d_port):
 	if inner_checksum_dontcare == 0:
-		return IPv6(dst=d_ip6)/TCP(dport=int(d_port), sport=int(s_port), flags=tcp_flags,chksum=0xdead)
+		return IPv6(src=sip6,dst=d_ip6)/TCP(dport=int(d_port), sport=int(s_port), flags=tcp_flags,chksum=0xdead)
 	else:
-		return IPv6(dst=d_ip6)/TCP(dport=int(d_port), sport=int(s_port), flags=tcp_flags)
+		return IPv6(src=sip6,dst=d_ip6)/TCP(dport=int(d_port), sport=int(s_port), flags=tcp_flags)
 
 def geneve(vni_id, proto_id):
 	return scapy.contrib.geneve.GENEVE(vni=int(vni_id), proto=int(proto_id))
@@ -335,6 +357,8 @@ parser.add_argument("--bad-chksum", help="Generate plain pkts with bad checksum"
 		    action="store_true")
 parser.add_argument("-i", "--interface", type=str, help="Interface to DUT",
 		    required=False, default=str(ethdev_name))
+parser.add_argument("-w", "--write-pcap", type=str, help="Write to PCAP",
+		    required=False, default=None)
 parser.add_argument("--minsize", type=int, help="Min pkt size",
 		    required=False, default=minsize)
 parser.add_argument("--maxsize", type=int, help="Max pkt size",
@@ -343,8 +367,17 @@ parser.add_argument("--sizeinc", type=int, help="Pkt size increment per burst",
 		    required=False, default=sizeinc)
 parser.add_argument("--ipsec-sas", type=int, help="IPSec SA's to create",
 		    required=False, default=ipsec_sas)
+parser.add_argument("--accept-plain", help="Accept plain pkts received with ipsec outbound",
+		    required=False, action="store_true")
+parser.add_argument("--transport", help="Transport mode esp", required=False,
+		    action="store_true")
+parser.add_argument("--esn", help="ESN enable", required=False,
+		    action="store_true")
 
+write_to_pcap = 0
+capture_name = None
 opt_str = ""
+
 args = parser.parse_args()
 if args.inb_ipsec and args.outb_ipsec:
 	printf("Invalid arguments, both inbound and outbound cannot be enabled")
@@ -370,8 +403,23 @@ if args.minsize:
 	minsize = args.minsize
 if args.maxsize:
 	maxsize = args.maxsize
-if args.sizeinc:
-	sizeinc = args.sizeinc
+if args.ipsec_sas:
+	ipsec_sas = args.ipsec_sas
+if args.accept_plain:
+	outb_accept_plain = 1
+	opt_str = opt_str + "outb_accept_plain=1 "
+if args.transport:
+	transport = 1
+	opt_str = opt_str + "transport=1 "
+if args.write_pcap:
+	write_to_pcap = 1
+	capture_name = args.write_pcap
+	capture_rx = 0
+if args.esn:
+	esn_en = 1
+	opt_str = opt_str + "esn_en=1 "
+
+sizeinc = args.sizeinc
 
 if args.proto:
 	for key in opt_dict.keys():
@@ -391,7 +439,10 @@ if inb_ipsec or outb_ipsec:
 opt_str = opt_str + "pkt_bursts=%u flows=%u burst_size=%u " % (pkt_bursts, flows, burst_size)
 opt_str = opt_str + "minsize=%u maxsize=%u sizeinc=%u" % (minsize, maxsize, sizeinc)
 printf("DUTMAC     : %s\n" % str(dutmac))
-printf("Interface  : %s\n" % ethdev_name)
+if write_to_pcap != 0:
+	printf("Capture file: tr_files/%s\n" % capture_name)
+else:
+	printf("Interface  : %s\n" % ethdev_name)
 printf("Options    : %s\n\n" % opt_str)
 printf("Protocols for plain pkts: ")
 
@@ -437,6 +488,9 @@ if os.path.exists("tr_files") == 0:
 	os.mkdir('tr_files')
 os.chdir('./tr_files')
 
+if os.path.isfile(str(capture_name)):
+	os.remove(str(capture_name))
+
 def signal_handler(sig, frame):
 	print('You pressed Ctrl+C!. Killing tcpdump!!!')
 	os.kill(full.pid, signal.SIGKILL)
@@ -464,9 +518,16 @@ if ipsec_sas != 0:
 spi_base = 0x13
 for i in range(ipsec_sas):
 	spi = int(spi_base) + i
+	if transport == 1:
+		mode = "transport"
+		hdr=None
+	else:
+		mode = "ipv4-tunnel src %s dst %s" % (tunsip, tundip)
+		hdr=IP(src=tunsip, dst=tundip)
+
 	sa = SecurityAssociation(ESP, spi=int(spi), crypt_algo='AES-GCM',
 				 crypt_key=b'sixteenbytes keydpdk',
-				 tunnel_header=IP(src=tunsip, dst=tundip))
+				 tunnel_header=hdr, esn_en=esn_en)
 	sessions[i] = sa
 	# Write out DPDK conf for the same
 	cipher_key = ':'.join(hex(x)[2:] for x in sa.crypt_key)
@@ -475,16 +536,19 @@ for i in range(ipsec_sas):
 
 	if inb_ipsec != 0:
 		fprintf(gw_fd, 'sp ipv4 in esp protect %u pri 1 dst 192.18.%u.0/24 sport 0:65535 dport 0:65535\n' % (spi, i))
+#	fprintf(gw_fd, 'sp ipv6 in esp protect %u pri 1 dst ::192.18.%u.0/120 sport 0:65535 dport 0:65535\n' % (spi, i))
 		fprintf(gw_fd, 'sa in %u aead_algo aes-128-gcm aead_key %s ' % (spi, cipher_key))
-		fprintf(gw_fd, 'mode ipv4-tunnel src %s dst %s %s\n' % (tunsip, tundip, offloadopt))
+		fprintf(gw_fd, 'mode %s %s\n' % (mode, offloadopt))
 	else:
 		fprintf(gw_fd, 'sp ipv4 out esp protect %u pri 1 dst 192.18.%u.0/24 sport 0:65535 dport 0:65535\n' % (spi, i))
+#		fprintf(gw_fd, 'sp ipv6 out esp protect %u pri 1 dst ::192.18.%u.0/120 sport 0:65535 dport 0:65535\n' % (spi, i))
 		fprintf(gw_fd, 'sa out %u aead_algo aes-128-gcm aead_key %s ' % (spi, cipher_key))
-		fprintf(gw_fd, 'mode ipv4-tunnel src %s dst %s %s\n' % (tunsip, tundip, offloadopt))
+		fprintf(gw_fd, 'mode %s %s\n' % (mode, offloadopt))
 
 	if i == ipsec_sas - 1:
 		fprintf(gw_fd, 'neigh port 0 11:22:33:44:55:66\n')
 		fprintf(gw_fd, 'rt ipv4 dst 192.18.0.0/16 port 0\n')
+#		fprintf(gw_fd, 'rt ipv6 dst ::192.18.0.0/120 port 0\n')
 		fprintf(gw_fd, 'rt ipv4 dst 1.1.0.0/16 port 0\n')
 
 	# Dummy SA out to trigger LF setup
@@ -493,7 +557,10 @@ for i in range(ipsec_sas):
 
 if ipsec_sas != 0:
 	gw_fd.close()
-	c = input("IPSec-GW conf stored at tr_files/%s, hit any key to continue:" % ipsec_secgw_fname)
+	if write_to_pcap != 0:
+		print("IPSec-GW conf stored at tr_files/%s." % ipsec_secgw_fname)
+	else:
+		c = input("IPSec-GW conf stored at tr_files/%s, hit any key to continue:" % ipsec_secgw_fname)
 
 sa = sessions[0]
 next_sa = sa
@@ -523,7 +590,7 @@ while count < pkt_bursts:
 				pkttype += 1
 		#IPv4 PTP
 		if ipv4_ptp != 0:
-			pkt = Ether(dst=dmac,type=0x88f7)/"\x00\x02"
+			pkt = Ether(src=smac,dst=dmac,type=0x88f7)/"\x00\x02"
 			string = pkt_data_str(set_string, 'IPv4PTP', size - len(pkt))
 			pkt = pkt / Raw(string)
 			pkt_list += pkt
@@ -531,7 +598,7 @@ while count < pkt_bursts:
 
 		#IPv4 TCP
 		if ipv4_tcp != 0:
-			pkt = Ether(dst=dmac)/IP(dst=dip, src=sip, chksum=0xbeef, ttl=(1,1))/TCP(dport=int(dport), sport=pkttype, flags=tcp_flags,chksum=0xdead)
+			pkt = Ether(src=smac,dst=dmac)/IP(dst=dip, src=sip, chksum=0xbeef, ttl=(1,1))/TCP(dport=int(dport), sport=pkttype, flags=tcp_flags,chksum=0xdead)
 			string = pkt_data_str(set_string, 'IPv4TCP', size - len(pkt))
 			pkt = pkt / Raw(string)
 			pkt_list += pkt
@@ -539,7 +606,7 @@ while count < pkt_bursts:
 
 		#IPV4 UDP
 		if ipv4_udp != 0:
-			pkt = Ether(dst=dmac)/IP(dst=dip,src=sip, chksum=0xbeef, ttl=(1,1))/UDP(dport=int(dport), sport=pkttype, chksum=0xdead)
+			pkt = Ether(src=smac,dst=dmac)/IP(dst=dip,src=sip, chksum=0xbeef, ttl=(1,1))/UDP(dport=int(dport), sport=pkttype, chksum=0xdead)
 			string = pkt_data_str(set_string, 'IPv4UDP', size - len(pkt))
 			pkt = pkt / Raw(string)
 			pkt_list += pkt
@@ -547,7 +614,7 @@ while count < pkt_bursts:
 
 		#IPV4 SCTP
 		if ipv4_sctp != 0:
-			pkt = Ether(dst=dmac)/IP(dst=dip,src=sip,chksum=0xbeef, ttl=(1,1))/SCTP(dport=int(dport), sport=pkttype, chksum=0)
+			pkt = Ether(src=smac,dst=dmac)/IP(dst=dip,src=sip,chksum=0xbeef, ttl=(1,1))/SCTP(dport=int(dport), sport=pkttype, chksum=0)
 			string = pkt_data_str(set_string, 'IPv4SCTP', size - len(pkt))
 			pkt = pkt / Raw(string)
 			pkt_list += pkt
@@ -555,7 +622,7 @@ while count < pkt_bursts:
 
 		#IPv6 TCP
 		if ipv6_tcp != 0:
-			pkt = Ether(dst=dmac)/in_ip6_tcp(dip6, pkttype, dport)
+			pkt = Ether(src=smac,dst=dmac)/IPv6(dst=dip6, src=sip6)/TCP(dport=int(dport), sport=pkttype, chksum=0xdead)
 			string = pkt_data_str(set_string, 'IPv6TCP', size - len(pkt))
 			pkt = pkt / Raw(string)
 			pkt_list += pkt
@@ -563,15 +630,24 @@ while count < pkt_bursts:
 
 		#IPV6 UDP
 		if ipv6_udp != 0:
-			pkt = Ether(dst=dmac)/IPv6(dst=dip6, src=sip6)/UDP(dport=int(dport), sport=pkttype, chksum=0xdead)
+			pkt = Ether(src=smac,dst=dmac)/IPv6(dst=dip6, src=sip6)/UDP(dport=int(dport), sport=pkttype, chksum=0xdead)
 			string = pkt_data_str(set_string, 'IPv6UDP', size - len(pkt))
+			pkt = pkt / Raw(string)
+			pkt_list += pkt
+			pkttype += 1
+
+		if ipv6_ext_udp != 0:
+			pkt = Ether(src=smac,dst=dmac)/IPv6(dst=dip6, src=sip6)
+			pkt = pkt / IPv6ExtHdrHopByHop() / IPv6ExtHdrDestOpt() / IPv6ExtHdrDestOpt() / IPv6ExtHdrRouting()
+			pkt = pkt / UDP(dport=int(dport), sport=pkttype, chksum=0xdead)
+			string = pkt_data_str(set_string, 'IPv6ExtUDP', size - len(pkt))
 			pkt = pkt / Raw(string)
 			pkt_list += pkt
 			pkttype += 1
 
 		#IPV6 SCTP
 		if ipv6_sctp != 0:
-			pkt = Ether(dst=dmac)/IPv6()/SCTP(dport=int(dport), sport=pkttype, chksum=0xdead)
+			pkt = Ether(src=smac,dst=dmac)/IPv6()/SCTP(dport=int(dport), sport=pkttype, chksum=0xdead)
 			string = pkt_data_str(set_string, 'IPv6SCTP', size - len(pkt))
 			pkt = pkt / Raw(string)
 			pkt_list += pkt
@@ -673,7 +749,7 @@ while count < pkt_bursts:
 			pkttype += 1
 		#Dot1Q IPv4 TCP
 		if dot1q_ipv4_tcp != 0:
-			pkt = Ether(dst=dmac)/Dot1Q()/in_ip_tcp(dip, pkttype, dport)
+			pkt = Ether(src=smac,dst=dmac)/Dot1Q()/in_ip_tcp(dip, pkttype, dport)
 			string = pkt_data_str(set_string, 'Dot1QIPv4TCP', size - len(pkt))
 			pkt = pkt / Raw(string)
 			pkt_list += pkt
@@ -681,7 +757,7 @@ while count < pkt_bursts:
 
 		#Dot1Q IPv6 TCP
 		if dot1q_ipv6_tcp != 0:
-			pkt = Ether(dst=dmac)/Dot1Q()/in_ip6_tcp(dip6, pkttype, dport)
+			pkt = Ether(src=smac,dst=dmac)/Dot1Q()/IPv6(dst=dip6, src=sip6)/UDP(dport=int(dport), sport=pkttype, chksum=0xdead)
 			string = pkt_data_str(set_string, 'Dot1QIPv6TCP', size - len(pkt))
 			pkt = pkt / Raw(string)
 			pkt_list += pkt
@@ -689,7 +765,7 @@ while count < pkt_bursts:
 
 		#Dot1Q/IPV4/GRE/IPV4/TCP
 		if dot1q_ipv4_gre_ipv4_tcp != 0:
-			pkt = Ether(dst=dmac)/Dot1Q()/IP(chksum=0xdead)/GRE(proto=0x0800)/in_ip_tcp(dip, pkttype, dport)
+			pkt = Ether(src=smac,dst=dmac)/Dot1Q()/IP(chksum=0xdead)/GRE(proto=0x0800)/in_ip_tcp(dip, pkttype, dport)
 			string = pkt_data_str(set_string, 'Dot1QIPv4GREIPv4TCP', size - len(pkt))
 			pkt = pkt / Raw(string)
 			pkt_list += pkt
@@ -697,7 +773,7 @@ while count < pkt_bursts:
 
 		#Dot1AD Dot1Q IPv4 TCP
 		if dot1ad_dot1q_ipv4_tcp != 0:
-			pkt = Ether(dst=dmac)/Dot1AD()/Dot1Q()/in_ip_tcp(dip, pkttype, dport)
+			pkt = Ether(src=smac,dst=dmac)/Dot1AD()/Dot1Q()/in_ip_tcp(dip, pkttype, dport)
 			string = pkt_data_str(set_string, 'Dot1ADDot1QIPv4TCP', size - len(pkt))
 			pkt = pkt / Raw(string)
 			pkt_list += pkt
@@ -705,7 +781,7 @@ while count < pkt_bursts:
 
 		#Dot1AD Dot1Q IPv6 TCP
 		if dot1ad_dot1q_ipv6_tcp != 0:
-			pkt = Ether(dst=dmac)/Dot1AD()/Dot1Q()/in_ip6_tcp(dip6, pkttype, dport)
+			pkt = Ether(src=smac,dst=dmac)/Dot1AD()/Dot1Q()/IPv6(dst=dip6, src=sip6)/UDP(dport=int(dport), sport=pkttype, chksum=0xdead)
 			string = pkt_data_str(set_string, 'Dot1ADDot1QIPv6TCP', size - len(pkt))
 			pkt = pkt / Raw(string)
 			pkt_list += pkt
@@ -713,16 +789,11 @@ while count < pkt_bursts:
 
 		#Dot1AD/Dot1Q/IPV4/GRE/IPV4/TCP
 		if dot1ad_dot1q_ipv4_gre_ipv4_tcp != 0:
-			pkt = Ether(dst=dmac)/Dot1AD()/Dot1Q()/IP(chksum=0xdead)/GRE(proto=0x0800)/in_ip_tcp(dip, pkttype, dport)
+			pkt = Ether(src=smac,dst=dmac)/Dot1AD()/Dot1Q()/IP(chksum=0xdead)/GRE(proto=0x0800)/in_ip_tcp(dip, pkttype, dport)
 			string = pkt_data_str(set_string, 'Dot1ADDot1QIPv4GREIPv4TCP', size - len(pkt))
 			pkt = pkt / Raw(string)
 			pkt_list += pkt
 			pkttype += 1
-
-		# Dump packets to pkts.h
-		if dump != 0:
-			for pkt in pkt_list:
-				pkt_data_dump(pkt)
 
 	new_pkt_list = []
 	for pkt in pkt_list:
@@ -734,14 +805,23 @@ while count < pkt_bursts:
 			l = pkt[Ether].payload
 			if pkt.firstlayer()[1].name == '802.1Q':
 				l = pkt[Dot1Q].payload
-				new_pkt_list += Ether(dst=dmac)/Dot1Q()/sa.encrypt(l)
+				new_pkt_list += Ether(src=smac,dst=dmac)/Dot1Q()/sa.encrypt(l)
 			else:
-				new_pkt_list += Ether(dst=dmac)/sa.encrypt(l)
+				new_pkt_list += Ether(src=smac,dst=dmac)/sa.encrypt(l)
 		else:
 			clear_bad_checksum(pkt, good_checksum)
 			new_pkt_list += pkt
+
+	# Dump packets to pkts.h
+	if dump != 0:
+		for pkt in new_pkt_list:
+			pkt_data_dump(pkt)
+
 	# Send burst
-	sendp(new_pkt_list, count=1, iface=str(name), verbose=0, return_packets=0)
+	if write_to_pcap == 0:
+		sendp(new_pkt_list, count=1, iface=str(name), verbose=0, return_packets=0)
+	else:
+		wrpcap(str(capture_name), new_pkt_list, append=True)
 
 	#printf("Sent pkt of size %u\n" % size)
 	#time.sleep(4)
@@ -854,7 +934,7 @@ if capture_rx != 0:
 			spi = pkt[ESP].spi
 			idx = int(spi) - int(spi_base)
 			sa = sessions[idx]
-			sent_list += Ether(dst=dmac)/sa.decrypt(pkt[Ether].payload)
+			sent_list += Ether(src=smac,dst=dmac)/sa.decrypt(pkt[Ether].payload)
 		# Write plain pkts out
 		wrpcap('full-sent.pcap', sent_list)
 
@@ -863,10 +943,19 @@ if capture_rx != 0:
 		cipher_recv_list = recv_list
 		recv_list = []
 		for pkt in cipher_recv_list:
-			spi = pkt[ESP].spi
-			idx = int(spi) - int(spi_base)
-			sa = sessions[idx]
-			recv_list += Ether(dst=dmac)/sa.decrypt(pkt[Ether].payload)
+			try:
+				spi = pkt[ESP].spi
+				idx = int(spi) - int(spi_base)
+				sa = sessions[idx]
+				recv_list += Ether(src=smac,dst=dmac)/sa.decrypt(pkt[Ether].payload)
+			except:
+				if outb_accept_plain == 0:
+					printf("Received unexpected plain pkts\n")
+					pkt.show()
+					exit(1)
+				outb_plain_pkts += 1
+				recv_list += pkt
+				continue
 		# Write plain pkts out
 		wrpcap('full-recv.pcap', recv_list)
 
@@ -878,6 +967,9 @@ if capture_rx != 0:
 
 	if recv_sanity != 0:
 		sniff_and_check_sanity(sent_list, recv_list)
-		printf("\rResult as expected for %d/%d pkts\n" % (good_pkts_count, total_pkts_count))
+		if outb_accept_plain != 0:
+			printf("\rResult as expected for %d/%d pkts(%d plain pkts)\n" % (good_pkts_count, total_pkts_count, outb_plain_pkts))
+		else:
+			printf("\rResult as expected for %d/%d pkts\n" % (good_pkts_count, total_pkts_count))
 		if total_pkts_count != good_pkts_count:
 			printf("Please check sent.txt, expect.txt, recv.txt for errors\n")
