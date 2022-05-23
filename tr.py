@@ -70,18 +70,7 @@ opt_dict = {
 'ctrl_pkts':0,
 }
 
-ipdststart = { 0: "198.18.0.0",
-	       1: "172.25.14.1",
-	       2: "172.25.15.1",
-	       3: "172.25.16.1",
-	       4: "172.25.17.1",
-	       5: "172.25.18.1",
-	       6: "172.25.19.1",
-	       7: "172.25.20.1",
-	       8: "172.25.21.1",
-	       9: "172.25.22.1",
-	       10: "172.25.23.1",
-	       11: "172.25.24.1", }
+ipdststart = "198.18.0.0"
 smac = "02:00:00:00:01:00"
 dmac = "02:00:00:00:00:00"
 sip = "193.18.0.1"
@@ -102,11 +91,6 @@ ctrl_pkt_list = []
 #ctrl_pkt_list += Ether(src=smac,dst=dmac, type=0x8035)/Raw("ABCDEF")
 ctrl_pkt_list += Ether(src=smac,dst=dmac)/IP()/GRE()
 #ctrl_pkt_list += Ether(src=smac,dst=dmac, type=0x8847)/Raw("ABCDEF")
-
-a = [None] * 1
-a6 = [None] * 1
-a[0] = ipaddress.ip_address(ipdststart[0])
-a6[0] = ipaddress.ip_address("::" + ipdststart[0])
 
 fo = None
 sent_file = None
@@ -375,6 +359,8 @@ parser.add_argument("--esn", help="ESN enable", required=False,
 		    action="store_true")
 parser.add_argument("--dmac", type=str, help="DUT DMAC",
 		    required=False, default=dmac)
+parser.add_argument("--dip", type=str, help="DUT DIP",
+		    required=False)
 parser.add_argument("--ipsec-v6-tunnel", help="IPsec V6 tunnel", required=False,
 		    action="store_true")
 
@@ -424,6 +410,9 @@ if args.esn:
 	opt_str = opt_str + "esn_en=1 "
 if args.dmac:
 	dmac = args.dmac
+if args.dip:
+	ipdststart = args.dip
+	opt_str = opt_str + "dip=%s " % str(ipdststart)
 if args.ipsec_v6_tunnel:
 	ipsec_v6_tunnel = 1
 	opt_str = opt_str + "ipsec_v6_tunnel=1 "
@@ -559,27 +548,33 @@ for i in range(ipsec_sas):
 	cipher_key = cipher_key + ':' + ':'.join(hex(x)[2:] for x in sa.crypt_salt)
 	offloadopt = 'type inline-protocol-offload port_id 0'
 
+	ip4 = ipaddress.ip_address(ipdststart)
+	ip4 = ip4 + (i << 8)
+	ip6 = ipaddress.ip_address("::" + ipdststart)
+	ip6 = ip6 + (i << 8)
 	if inb_ipsec != 0:
 		if ipv4_proto != 0:
-			fprintf(gw_fd, 'sp ipv4 in esp protect %u pri 1 dst 198.18.%u.0/24 sport 0:65535 dport 0:65535\n' % (spi, i))
+			fprintf(gw_fd, 'sp ipv4 in esp protect %u pri 1 dst %s/24 sport 0:65535 dport 0:65535\n' % (spi, str(ip4)))
 		else:
-			fprintf(gw_fd, 'sp ipv6 in esp protect %u pri 1 dst ::198.18.%u.0/120 sport 0:65535 dport 0:65535\n' % (spi, i))
+			fprintf(gw_fd, 'sp ipv6 in esp protect %u pri 1 dst %s/120 sport 0:65535 dport 0:65535\n' % (spi, str(ip6)))
 		fprintf(gw_fd, 'sa in %u aead_algo aes-128-gcm aead_key %s ' % (spi, cipher_key))
 		fprintf(gw_fd, 'mode %s %s\n' % (mode, offloadopt))
 	else:
 		if ipv4_proto != 0:
-			fprintf(gw_fd, 'sp ipv4 out esp protect %u pri 1 dst 198.18.%u.0/24 sport 0:65535 dport 0:65535\n' % (spi, i))
+			fprintf(gw_fd, 'sp ipv4 out esp protect %u pri 1 dst %s/24 sport 0:65535 dport 0:65535\n' % (spi, str(ip4)))
 		else:
-			fprintf(gw_fd, 'sp ipv6 out esp protect %u pri 1 dst ::198.18.%u.0/120 sport 0:65535 dport 0:65535\n' % (spi, i))
+			fprintf(gw_fd, 'sp ipv6 out esp protect %u pri 1 dst %s/120 sport 0:65535 dport 0:65535\n' % (spi, str(ip6)))
 		fprintf(gw_fd, 'sa out %u aead_algo aes-128-gcm aead_key %s ' % (spi, cipher_key))
 		fprintf(gw_fd, 'mode %s %s\n' % (mode, offloadopt))
 
 	if i == ipsec_sas - 1:
+		ip4 = ipaddress.ip_address(ipdststart)
+		ip6 = ipaddress.ip_address("::" + ipdststart)
 		fprintf(gw_fd, 'neigh port 0 11:22:33:44:55:66\n')
 		if ipv4_proto != 0:
-			fprintf(gw_fd, 'rt ipv4 dst 198.18.0.0/16 port 0\n')
+			fprintf(gw_fd, 'rt ipv4 dst %s/16 port 0\n' % str(ip4))
 		else:
-			fprintf(gw_fd, 'rt ipv6 dst ::198.18.0.0/120 port 0\n')
+			fprintf(gw_fd, 'rt ipv6 dst %s/120 port 0\n' % str(ip6))
 		fprintf(gw_fd, 'rt ipv4 dst 1.1.0.0/16 port 0\n')
 
 if ipsec_sas != 0:
@@ -592,6 +587,11 @@ if ipsec_sas != 0:
 sa = sessions[0]
 next_sa = sa
 size = minsize
+
+a = [None] * 1
+a6 = [None] * 1
+a[0] = ipaddress.ip_address(ipdststart)
+a6[0] = ipaddress.ip_address("::" + ipdststart)
 
 while count < pkt_bursts:
 	dip = str(a[0])
@@ -858,8 +858,8 @@ while count < pkt_bursts:
 	if  ipsec_sas != 0:
 		sa_i = count % ipsec_sas
 		next_sa = sessions[sa_i]
-		a[0] = ipaddress.ip_address(ipdststart[0])
-		a6[0] = ipaddress.ip_address("::" + ipdststart[0])
+		a[0] = ipaddress.ip_address(ipdststart)
+		a6[0] = ipaddress.ip_address("::" + ipdststart)
 		a[0] = a[0] + (sa_i << 8)
 		a6[0] = a6[0] + (sa_i << 24)
 
@@ -868,8 +868,8 @@ while count < pkt_bursts:
 	printf("Sent packets %u/%u" % (total_pkts_count, test_pkts_count))
 	# Reset ip series when flows reached
 	if count % flows == 0:
-		a[0] = ipaddress.ip_address(ipdststart[0])
-		a6[0] = ipaddress.ip_address("::" + ipdststart[0])
+		a[0] = ipaddress.ip_address(ipdststart)
+		a6[0] = ipaddress.ip_address("::" + ipdststart)
 		next_sa = sessions[0]
 	size = size + sizeinc
 	if size > maxsize:
