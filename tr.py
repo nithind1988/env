@@ -18,8 +18,6 @@ import argparse
 from subprocess import DEVNULL
 from threading import Timer
 ethdev_name="asimnic0"
-dutmac = "02:00:00:00:00:00"
-#dutmac = "3e:23:24:7c:6a:b5"#"02:00:00:00:00:01"
 capture_rx=1
 recv_sanity=1
 sizeinc = 13
@@ -36,7 +34,10 @@ outb_accept_plain = 0
 inb_ipsec = 0
 outb_ipsec = 0
 transport = 0
+ipsec_v6_tunnel = 0
 esn_en = 0
+ipv4_proto = 1
+ipv6_proto = 0
 
 #default bool opts
 opt_dict = {
@@ -69,7 +70,7 @@ opt_dict = {
 'ctrl_pkts':0,
 }
 
-ipdststart = { 0: "192.18.0.0",
+ipdststart = { 0: "198.18.0.0",
 	       1: "172.25.14.1",
 	       2: "172.25.15.1",
 	       3: "172.25.16.1",
@@ -82,7 +83,7 @@ ipdststart = { 0: "192.18.0.0",
 	       10: "172.25.23.1",
 	       11: "172.25.24.1", }
 smac = "02:00:00:00:01:00"
-dmac = dutmac#"22:E7:F5:31:C0:C0"#"3E:5F:32:15:AD:23"#"8E:94:98:7D:57:E8"#"3A:58:C0:65:1C:79"#"12:4e:31:15:b0:1b"
+dmac = "02:00:00:00:00:00"
 sip = "193.18.0.1"
 sip6 = "::193.18.0.1"
 tundip = "1.1.1.1"
@@ -271,7 +272,6 @@ def sniff_and_check_sanity(sent_list, recv_list):
 			sent_file.write(bytes(i.show2(dump=True), 'UTF-8'))
 		for i in recv_list:
 			recv_file.write(bytes(i.show2(dump=True), 'UTF-8'))
-		return
 	itr = 0
 	for pkt in sent_list:
 		if ctrl_pkts == 0:
@@ -373,6 +373,10 @@ parser.add_argument("--transport", help="Transport mode esp", required=False,
 		    action="store_true")
 parser.add_argument("--esn", help="ESN enable", required=False,
 		    action="store_true")
+parser.add_argument("--dmac", type=str, help="DUT DMAC",
+		    required=False, default=dmac)
+parser.add_argument("--ipsec-v6-tunnel", help="IPsec V6 tunnel", required=False,
+		    action="store_true")
 
 write_to_pcap = 0
 capture_name = None
@@ -418,6 +422,11 @@ if args.write_pcap:
 if args.esn:
 	esn_en = 1
 	opt_str = opt_str + "esn_en=1 "
+if args.dmac:
+	dmac = args.dmac
+if args.ipsec_v6_tunnel:
+	ipsec_v6_tunnel = 1
+	opt_str = opt_str + "ipsec_v6_tunnel=1 "
 
 sizeinc = args.sizeinc
 
@@ -425,20 +434,28 @@ if args.proto:
 	for key in opt_dict.keys():
 		opt_dict[key]=0
 
+	ipv4_proto = 0
+	ipv6_proto = 0
 	# Overriding default bool options when args are given
 	x = str(args.proto)
 	for k in x.split(','):
 		reObj = re.compile(k)
 		for key in opt_dict.keys():
-			if(reObj.match(key)):
+			if (reObj.match(key)):
 				opt_dict[key]=1
+			if opt_dict[key] != 1:
+				continue
+			if key.startswith("ipv4"):
+				ipv4_proto = 1
+			else:
+				ipv6_proto = 1
 
 if inb_ipsec or outb_ipsec:
 	opt_str = opt_str + "ipsec_sas=%u " % ipsec_sas
 
 opt_str = opt_str + "pkt_bursts=%u flows=%u burst_size=%u " % (pkt_bursts, flows, burst_size)
 opt_str = opt_str + "minsize=%u maxsize=%u sizeinc=%u" % (minsize, maxsize, sizeinc)
-printf("DUTMAC     : %s\n" % str(dutmac))
+printf("DMAC       : %s\n" % str(dmac))
 if write_to_pcap != 0:
 	printf("Capture file: tr_files/%s\n" % capture_name)
 else:
@@ -493,14 +510,20 @@ if os.path.isfile(str(capture_name)):
 
 def signal_handler(sig, frame):
 	print('You pressed Ctrl+C!. Killing tcpdump!!!')
-	os.kill(full.pid, signal.SIGKILL)
+	os.kill(full_sent.pid, signal.SIGKILL)
+	os.kill(full_recv.pid, signal.SIGKILL)
 	sys.exit(0)
 
 # Start a full capture if requested
 if capture_rx != 0:
-	full = subprocess.Popen(['tcpdump', '-U', '--immediate-mode', '-i', str(ethdev_name),
-				'-w', 'full.pcap', '-s 0'], stdout=subprocess.PIPE,
-				stderr=DEVNULL)
+	if os.path.isfile('full-sent.pcap'):
+		os.remove('full-sent.pcap')
+	if os.path.isfile('full-recv.pcap'):
+		os.remove('full-recv.pcap')
+	full_recv = subprocess.Popen(['tcpdump', '-U', '--immediate-mode', '-i', str(ethdev_name),
+				'-w', 'full-recv.pcap', '-s 0', '-Q', 'in' ], stdout=subprocess.PIPE, stderr=DEVNULL)
+	full_sent = subprocess.Popen(['tcpdump', '-U', '--immediate-mode', '-i', str(ethdev_name),
+				'-w', 'full-sent.pcap', '-s 0', '-Q', 'out'], stdout=subprocess.PIPE, stderr=DEVNULL)
 	signal.signal(signal.SIGINT, signal_handler)
 	time.sleep(4)
 
@@ -522,9 +545,11 @@ for i in range(ipsec_sas):
 		mode = "transport"
 		hdr=None
 	else:
-		mode = "ipv4-tunnel src %s dst %s" % (tunsip, tundip)
+		if ipsec_v6_tunnel == 0:
+			mode = "ipv4-tunnel src %s dst %s" % (tunsip, tundip)
+		else:
+			mode = "ipv6-tunnel src ::%s dst ::%s" % (tunsip, tundip)
 		hdr=IP(src=tunsip, dst=tundip)
-
 	sa = SecurityAssociation(ESP, spi=int(spi), crypt_algo='AES-GCM',
 				 crypt_key=b'sixteenbytes keydpdk',
 				 tunnel_header=hdr, esn_en=esn_en)
@@ -535,25 +560,27 @@ for i in range(ipsec_sas):
 	offloadopt = 'type inline-protocol-offload port_id 0'
 
 	if inb_ipsec != 0:
-		fprintf(gw_fd, 'sp ipv4 in esp protect %u pri 1 dst 192.18.%u.0/24 sport 0:65535 dport 0:65535\n' % (spi, i))
-#	fprintf(gw_fd, 'sp ipv6 in esp protect %u pri 1 dst ::192.18.%u.0/120 sport 0:65535 dport 0:65535\n' % (spi, i))
+		if ipv4_proto != 0:
+			fprintf(gw_fd, 'sp ipv4 in esp protect %u pri 1 dst 198.18.%u.0/24 sport 0:65535 dport 0:65535\n' % (spi, i))
+		else:
+			fprintf(gw_fd, 'sp ipv6 in esp protect %u pri 1 dst ::198.18.%u.0/120 sport 0:65535 dport 0:65535\n' % (spi, i))
 		fprintf(gw_fd, 'sa in %u aead_algo aes-128-gcm aead_key %s ' % (spi, cipher_key))
 		fprintf(gw_fd, 'mode %s %s\n' % (mode, offloadopt))
 	else:
-		fprintf(gw_fd, 'sp ipv4 out esp protect %u pri 1 dst 192.18.%u.0/24 sport 0:65535 dport 0:65535\n' % (spi, i))
-#		fprintf(gw_fd, 'sp ipv6 out esp protect %u pri 1 dst ::192.18.%u.0/120 sport 0:65535 dport 0:65535\n' % (spi, i))
+		if ipv4_proto != 0:
+			fprintf(gw_fd, 'sp ipv4 out esp protect %u pri 1 dst 198.18.%u.0/24 sport 0:65535 dport 0:65535\n' % (spi, i))
+		else:
+			fprintf(gw_fd, 'sp ipv6 out esp protect %u pri 1 dst ::198.18.%u.0/120 sport 0:65535 dport 0:65535\n' % (spi, i))
 		fprintf(gw_fd, 'sa out %u aead_algo aes-128-gcm aead_key %s ' % (spi, cipher_key))
 		fprintf(gw_fd, 'mode %s %s\n' % (mode, offloadopt))
 
 	if i == ipsec_sas - 1:
 		fprintf(gw_fd, 'neigh port 0 11:22:33:44:55:66\n')
-		fprintf(gw_fd, 'rt ipv4 dst 192.18.0.0/16 port 0\n')
-#		fprintf(gw_fd, 'rt ipv6 dst ::192.18.0.0/120 port 0\n')
+		if ipv4_proto != 0:
+			fprintf(gw_fd, 'rt ipv4 dst 198.18.0.0/16 port 0\n')
+		else:
+			fprintf(gw_fd, 'rt ipv6 dst ::198.18.0.0/120 port 0\n')
 		fprintf(gw_fd, 'rt ipv4 dst 1.1.0.0/16 port 0\n')
-
-	# Dummy SA out to trigger LF setup
-#fprintf(fd, 'sa out 109999 aead_algo aes-128-gcm aead_key %s ' % cipher_key)
-#	fprintf(fd, 'mode ipv4-tunnel src %s dst %s %s\n' % (tunsip, tundip, offloadopt))
 
 if ipsec_sas != 0:
 	gw_fd.close()
@@ -868,29 +895,31 @@ def dump_pkt_load(pkt, fd):
 			j = 0
 if capture_rx != 0:
 	name = input("Hit any key to stop full capture and quit: ")
-	os.kill(full.pid, signal.SIGINT)
-	full.wait()
+	os.kill(full_sent.pid, signal.SIGINT)
+	os.kill(full_recv.pid, signal.SIGINT)
+	full_sent.wait()
+	full_recv.wait()
 
 # Split sent and recv
-	if os.path.isfile('full-sent.pcap'):
-		os.remove('full-sent.pcap')
-	if os.path.isfile('full-recv.pcap'):
-		os.remove('full-recv.pcap')
+#	if os.path.isfile('full-sent.pcap'):
+#		os.remove('full-sent.pcap')
+#	if os.path.isfile('full-recv.pcap'):
+#		os.remove('full-recv.pcap')
 
-	sent_filter = "ether dst %s" % dutmac.lower()
-	recv_filter = "not ether dst %s" % dutmac.lower()
-	s = subprocess.Popen(['tcpdump', '-r', 'full.pcap',
-				'-w', 'full-sent.pcap', sent_filter], stdout=subprocess.PIPE,
-				stderr=DEVNULL)
+#	sent_filter = "ether dst %s" % dutmac.lower()
+#	recv_filter = "not ether dst %s" % dutmac.lower()
+#	s = subprocess.Popen(['tcpdump', '-r', 'full.pcap',
+#				'-w', 'full-sent.pcap', sent_filter], stdout=subprocess.PIPE,
+#				stderr=DEVNULL)
 
-	r = subprocess.Popen(['tcpdump', '-r', 'full.pcap',
-				'-w', 'full-recv.pcap', recv_filter], stdout=subprocess.PIPE,
-				stderr=DEVNULL)
-	s.wait();
-	r.wait();
+#	r = subprocess.Popen(['tcpdump', '-r', 'full.pcap',
+#				'-w', 'full-recv.pcap', recv_filter], stdout=subprocess.PIPE,
+#				stderr=DEVNULL)
+#	s.wait();
+#	r.wait();
 
 	if name != '':
-		os.rename('full.pcap', '%s-full.pcap' % name)
+#		os.rename('full.pcap', '%s-full.pcap' % name)
 		os.rename('full-sent.pcap', '%s-full-sent.pcap' % name)
 		os.rename('full-recv.pcap', '%s-full-recv.pcap' % name)
 		printf("Please check complete capture in tr_files/%s-[full|full-sent|full-recv].pcap\n" % name)
