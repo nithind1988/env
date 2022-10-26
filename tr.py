@@ -363,6 +363,10 @@ parser.add_argument("--dip", type=str, help="DUT DIP",
 		    required=False)
 parser.add_argument("--ipsec-v6-tunnel", help="IPsec V6 tunnel", required=False,
 		    action="store_true")
+parser.add_argument("--cipher", type=str, help="Cipher Algo",
+		    required=False)
+parser.add_argument("--auth", type=str, help="Auth Algo",
+		    required=False)
 
 write_to_pcap = 0
 capture_name = None
@@ -539,8 +543,24 @@ for i in range(ipsec_sas):
 		else:
 			mode = "ipv6-tunnel src ::%s dst ::%s" % (tunsip, tundip)
 		hdr=IP(src=tunsip, dst=tundip)
-	sa = SecurityAssociation(ESP, spi=int(spi), crypt_algo='AES-GCM',
-				 crypt_key=b'sixteenbytes keydpdk',
+	calg = 'AES-GCM'
+	ckey = b'sixteenbytes keydpdk'
+	aalg = None
+	akey = None
+	if args.cipher != None:
+		calg = args.cipher
+	if args.auth != None:
+		aalg = args.auth
+
+	if calg == 'AES-GCM':
+		ckey = b'sixteenbytes keydpdk'
+	else:
+		ckey = b'sixteenbytes key'
+	if aalg == "HMAC-SHA1-96":
+		akey = b'a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0'
+
+	sa = SecurityAssociation(ESP, spi=int(spi), crypt_algo=calg,
+				 crypt_key=ckey, auth_algo=aalg, auth_key=akey,
 				 tunnel_header=hdr, esn_en=esn_en)
 	sessions[i] = sa
 	# Write out DPDK conf for the same
