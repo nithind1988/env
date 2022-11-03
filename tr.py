@@ -38,6 +38,7 @@ ipsec_v6_tunnel = 0
 esn_en = 0
 ipv4_proto = 1
 ipv6_proto = 0
+fragment_size = 0
 
 #default bool opts
 opt_dict = {
@@ -115,14 +116,15 @@ def printf(format, *args):
 def fprintf(file, format, *args):
 	file.write(bytes(format % args, 'UTF-8'))
 
-def clear_bad_checksum(pkt, good):
-	if good != 1:
-		return
+def checksum_override(pkt, good):
 	i = 0
 	j = 0
 	while pkt.firstlayer()[i].name != pkt.lastlayer().name:
 		try:
-			del pkt.firstlayer()[i].chksum
+			if good == 1:
+				del pkt.firstlayer()[i].chksum
+			else:
+				pkt.firstlayer()[i].chksum = 0xdead
 		except:
 			j = j + 1
 		i = i + 1
@@ -277,7 +279,7 @@ def sniff_and_check_sanity(sent_list, recv_list):
 		sent_buf = pkt.show2(dump=True)
 		sent_file.write(bytes(sent_buf, 'UTF-8'))
 
-		clear_bad_checksum(pkt, 1)
+		checksum_override(pkt, 1)
 		fprintf(expect_file, "\n%s\n" % pkt_name(pkt))
 		expect_buf = pkt.show2(dump=True)
 		expect_file.write(bytes(expect_buf, 'UTF-8'))
@@ -294,6 +296,53 @@ def sniff_and_check_sanity(sent_list, recv_list):
 			printf("%s" % str(line))
 			good=0
 		good_pkts_count = good_pkts_count + good
+	return
+
+def write_dpdk_ipsec_secgw_cfg(fd, sa, i):
+	calg = sa.crypt_algo.name
+	aalg = sa.auth_algo.name
+	cipher_key = ':'.join(hex(x)[2:] for x in sa.crypt_key)
+	if calg == 'AES-GCM':
+		cipher_key = cipher_key + ':' + ':'.join(hex(x)[2:] for x in sa.crypt_salt)
+	auth_key = None
+	if calg != 'AES-GCM':
+		auth_key = ':'.join(hex(x)[2:] for x in sa.auth_key)
+	offloadopt = 'type inline-protocol-offload port_id 0'
+
+	ip4 = ipaddress.ip_address(ipdststart)
+	ip4 = ip4 + (i << 8)
+	ip6 = ipaddress.ip_address("::" + ipdststart)
+	ip6 = ip6 + (i << 8)
+	if inb_ipsec != 0:
+		if ipv4_proto != 0:
+			fprintf(fd, 'sp ipv4 in esp protect %u pri 1 dst %s/24 sport 0:65535	dport 0:65535\n' % (sa.spi, str(ip4)))
+		else:
+			fprintf(fd, 'sp ipv6 in esp protect %u pri 1 dst %s/120 sport 0:65535 dport 0:65535\n' % (sa.spi, str(ip6)))
+		if calg == 'AES-GCM':
+			fprintf(fd, 'sa in %u aead_algo aes-128-gcm aead_key %s ' % (sa.spi, cipher_key))
+		else:
+			fprintf(fd, 'sa in %u cipher_algo aes-128-cbc cipher_key %s auth_algo sha1-hmac auth_key %s ' % (sa.spi, cipher_key, auth_key))
+		fprintf(fd, 'mode %s %s\n' % (mode, offloadopt))
+	else:
+		if ipv4_proto != 0:
+			fprintf(fd, 'sp ipv4 out esp protect %u pri 1 dst %s/24 sport 0:65535 dport 0:65535\n' % (sa.spi, str(ip4)))
+		else:
+			fprintf(fd, 'sp ipv6 out esp protect %u pri 1 dst %s/120 sport 0:65535 dport 0:65535\n' % (sa.spi, str(ip6)))
+		if calg == 'AES-GCM':
+			fprintf(fd, 'sa out %u aead_algo aes-128-gcm aead_key %s ' % (sa.spi, cipher_key))
+		else:
+			fprintf(fd, 'sa out %u cipher_algo aes-128-cbc cipher_key %s auth_algo sha1-hmac auth_key %s ' % (sa.spi, cipher_key, auth_key))
+		fprintf(fd, 'mode %s %s\n' % (mode, offloadopt))
+
+	if i == ipsec_sas - 1:
+		ip4 = ipaddress.ip_address(ipdststart)
+		ip6 = ipaddress.ip_address("::" + ipdststart)
+		fprintf(fd, 'neigh port 0 11:22:33:44:55:66\n')
+		if ipv4_proto != 0:
+			fprintf(fd, 'rt ipv4 dst %s/16 port 0\n' % str(ip4))
+		else:
+			fprintf(fd, 'rt ipv6 dst %s/120 port 0\n' % str(ip6))
+		fprintf(fd, 'rt ipv4 dst 1.1.0.0/16 port 0\n')
 	return
 
 # Helper functions
@@ -367,6 +416,8 @@ parser.add_argument("--cipher", type=str, help="Cipher Algo",
 		    required=False)
 parser.add_argument("--auth", type=str, help="Auth Algo",
 		    required=False)
+parser.add_argument("--fragment", type=int, help="Fragment outer L3 packet with LEN",
+		    required=False, default=fragment_size)
 
 write_to_pcap = 0
 capture_name = None
@@ -420,6 +471,9 @@ if args.dip:
 if args.ipsec_v6_tunnel:
 	ipsec_v6_tunnel = 1
 	opt_str = opt_str + "ipsec_v6_tunnel=1 "
+if args.fragment != 0:
+	fragment_size = args.fragment
+	opt_str = opt_str + "fragment=%u " % fragment_size
 
 sizeinc = args.sizeinc
 
@@ -557,45 +611,14 @@ for i in range(ipsec_sas):
 	else:
 		ckey = b'sixteenbytes key'
 	if aalg == "HMAC-SHA1-96":
-		akey = b'a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0'
+		akey =	b'\xa0\xa0\xa0\xa0\xa0\xa0\xa0\xa0\xa0\xa0\xa0\xa0\xa0\xa0\xa0\xa0\xa0\xa0\xa0\xa0'
 
 	sa = SecurityAssociation(ESP, spi=int(spi), crypt_algo=calg,
 				 crypt_key=ckey, auth_algo=aalg, auth_key=akey,
 				 tunnel_header=hdr, esn_en=esn_en)
 	sessions[i] = sa
 	# Write out DPDK conf for the same
-	cipher_key = ':'.join(hex(x)[2:] for x in sa.crypt_key)
-	cipher_key = cipher_key + ':' + ':'.join(hex(x)[2:] for x in sa.crypt_salt)
-	offloadopt = 'type inline-protocol-offload port_id 0'
-
-	ip4 = ipaddress.ip_address(ipdststart)
-	ip4 = ip4 + (i << 8)
-	ip6 = ipaddress.ip_address("::" + ipdststart)
-	ip6 = ip6 + (i << 8)
-	if inb_ipsec != 0:
-		if ipv4_proto != 0:
-			fprintf(gw_fd, 'sp ipv4 in esp protect %u pri 1 dst %s/24 sport 0:65535 dport 0:65535\n' % (spi, str(ip4)))
-		else:
-			fprintf(gw_fd, 'sp ipv6 in esp protect %u pri 1 dst %s/120 sport 0:65535 dport 0:65535\n' % (spi, str(ip6)))
-		fprintf(gw_fd, 'sa in %u aead_algo aes-128-gcm aead_key %s ' % (spi, cipher_key))
-		fprintf(gw_fd, 'mode %s %s\n' % (mode, offloadopt))
-	else:
-		if ipv4_proto != 0:
-			fprintf(gw_fd, 'sp ipv4 out esp protect %u pri 1 dst %s/24 sport 0:65535 dport 0:65535\n' % (spi, str(ip4)))
-		else:
-			fprintf(gw_fd, 'sp ipv6 out esp protect %u pri 1 dst %s/120 sport 0:65535 dport 0:65535\n' % (spi, str(ip6)))
-		fprintf(gw_fd, 'sa out %u aead_algo aes-128-gcm aead_key %s ' % (spi, cipher_key))
-		fprintf(gw_fd, 'mode %s %s\n' % (mode, offloadopt))
-
-	if i == ipsec_sas - 1:
-		ip4 = ipaddress.ip_address(ipdststart)
-		ip6 = ipaddress.ip_address("::" + ipdststart)
-		fprintf(gw_fd, 'neigh port 0 11:22:33:44:55:66\n')
-		if ipv4_proto != 0:
-			fprintf(gw_fd, 'rt ipv4 dst %s/16 port 0\n' % str(ip4))
-		else:
-			fprintf(gw_fd, 'rt ipv6 dst %s/120 port 0\n' % str(ip6))
-		fprintf(gw_fd, 'rt ipv4 dst 1.1.0.0/16 port 0\n')
+	write_dpdk_ipsec_secgw_cfg(gw_fd, sa, i)
 
 if ipsec_sas != 0:
 	gw_fd.close()
@@ -842,21 +865,31 @@ while count < pkt_bursts:
 			pkt_list += pkt
 			pkttype += 1
 
+	# L3 Fragment if needed
+	if fragment_size != 0:
+		tmp_list = []
+		for pkt in pkt_list:
+			if pkt.firstlayer()[1].name == 'IPv6' or pkt.firstlayer()[2].name == 'IPv6':
+				tmp_list += pkt.fragment6(fragsize=fragment_size)
+			else:
+				tmp_list += pkt.fragment(fragsize=fragment_size)
+		pkt_list = tmp_list
+
 	new_pkt_list = []
 	for pkt in pkt_list:
+		checksum_override(pkt, good_checksum)
 		if inb_ipsec != 0:
 			sa = next_sa
 
-			# Checksum is always good for ipsec
-			clear_bad_checksum(pkt, 1)
 			l = pkt[Ether].payload
 			if pkt.firstlayer()[1].name == '802.1Q':
 				l = pkt[Dot1Q].payload
-				new_pkt_list += Ether(src=smac,dst=dmac)/Dot1Q()/sa.encrypt(l)
+				new_pkt = Ether(src=smac,dst=dmac)/Dot1Q()/sa.encrypt(l)
+				new_pkt_list += new_pkt
 			else:
-				new_pkt_list += Ether(src=smac,dst=dmac)/sa.encrypt(l)
+				new_pkt = Ether(src=smac,dst=dmac)/sa.encrypt(l)
+				new_pkt_list += new_pkt
 		else:
-			clear_bad_checksum(pkt, good_checksum)
 			new_pkt_list += pkt
 
 	# Dump packets to pkts.h
